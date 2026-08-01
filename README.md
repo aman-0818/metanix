@@ -1,4 +1,4 @@
-# AionosGini
+# ConversationalAI-Gini
 
 Enterprise AI workspace: multi-LLM chat (including in-chat PPT generation),
 document intelligence, and document conversion — with an admin portal for
@@ -119,4 +119,4 @@ deploying anywhere shared.
 
 ## License
 
-Proprietary — © AIonOS. All rights reserved.
+Proprietary — © ConversationalAI-Gini. All rights reserved.
