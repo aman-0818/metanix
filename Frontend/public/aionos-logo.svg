@@ -1,0 +1,61 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 120" fill="none">
+  <!-- Outer orbital ring — teal, dashed arc (bottom gap) -->
+  <circle cx="60" cy="60" r="50"
+    stroke="url(#ring-grad)"
+    stroke-width="1.6"
+    stroke-dasharray="236 78"
+    stroke-dashoffset="-39"
+    stroke-linecap="round"
+    fill="none"
+    opacity="0.85"
+  />
+
+  <!-- Inner orbital ring — fainter, offset dash -->
+  <circle cx="60" cy="60" r="38"
+    stroke="#00c9a7"
+    stroke-width="1"
+    stroke-dasharray="60 180"
+    stroke-dashoffset="90"
+    stroke-linecap="round"
+    fill="none"
+    opacity="0.35"
+  />
+
+  <!-- Dot — top of orbit -->
+  <circle cx="60" cy="10" r="3.5" fill="#00d4aa" />
+
+  <!-- Dot — left of orbit -->
+  <circle cx="10" cy="60" r="2.8" fill="#00d4aa" opacity="0.8"/>
+
+  <!-- Dot — right of orbit -->
+  <circle cx="110" cy="60" r="2.8" fill="#00d4aa" opacity="0.8"/>
+
+  <!-- A letter — white, bold, centered -->
+  <text
+    x="56"
+    y="80"
+    font-family="'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif"
+    font-size="56"
+    font-weight="700"
+    letter-spacing="-2"
+    fill="white"
+    text-anchor="middle"
+  >A</text>
+
+  <!-- Compass pointer attached to bottom-right of A -->
+  <g transform="translate(76, 72)" opacity="0.95">
+    <!-- pointer arm -->
+    <line x1="0" y1="0" x2="10" y2="10" stroke="#00d4aa" stroke-width="2" stroke-linecap="round"/>
+    <!-- pointer tip dot -->
+    <circle cx="10" cy="10" r="2.2" fill="#00d4aa"/>
+  </g>
+
+  <!-- Gradient definition -->
+  <defs>
+    <linearGradient id="ring-grad" x1="60" y1="10" x2="60" y2="110" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#00d4aa"/>
+      <stop offset="50%" stop-color="#0ea5e9"/>
+      <stop offset="100%" stop-color="#00d4aa" stop-opacity="0.3"/>
+    </linearGradient>
+  </defs>
+</svg>

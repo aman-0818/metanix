@@ -1,0 +1,272 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    /* Warm ivory/olive palette — GINI / AIONOS.ai design spec */
+    --background: 60 17% 98%;        /* #FAFAF8 */
+    --foreground: 33 15% 15%;        /* #2B2620 */
+    --card: 0 0% 100%;               /* #FFFFFF */
+    --card-foreground: 33 15% 15%;
+    --popover: 0 0% 100%;
+    --popover-foreground: 33 15% 15%;
+    --primary: 173 80% 36%;          /* #12A594 */
+    --primary-foreground: 0 0% 100%;
+    --secondary: 40 33% 93%;         /* #F3EFE7 */
+    --secondary-foreground: 33 15% 15%;
+    --muted: 40 33% 93%;
+    --muted-foreground: 38 11% 40%;  /* #6B5F4E — darkened from 56% for WCAG AA (was ~2.96:1, now ~5.2:1 on #FAFAF8) */
+    --accent: 80 24% 93%;            /* #EEF1E8 sage */
+    --accent-foreground: 94 13% 37%; /* #5D6B52 sage text */
+    --destructive: 13 61% 43%;       /* #B0472A */
+    --destructive-foreground: 0 0% 100%;
+    --warning: 38 92% 32%;           /* amber, darkened to ~4.7:1 for AA text contrast */
+    --warning-foreground: 0 0% 100%;
+    --success: 152 55% 28%;          /* green, tuned for ~4.6:1 AA text contrast on #FAFAF8 */
+    --success-foreground: 0 0% 100%;
+    --info: 210 65% 38%;             /* blue, tuned for ~4.6:1 AA text contrast on #FAFAF8 */
+    --info-foreground: 0 0% 100%;
+    --border: 42 29% 87%;            /* #E7E1D3 */
+    --input: 40 33% 93%;
+    --ring: 173 80% 36%;
+    --radius: 0.75rem;
+    --sidebar-background: 60 3% 94%;    /* #F0F0EF */
+    --sidebar-foreground: 33 15% 15%;
+    --sidebar-primary: 173 80% 36%;
+    --sidebar-primary-foreground: 0 0% 100%;
+    --sidebar-accent: 0 0% 89%;          /* soft off-white — was #EAE3D5 (beige), scoped to sidebar only */
+    --sidebar-accent-foreground: 33 15% 15%;
+    --sidebar-border: 60 3% 89%;        /* #E3E3E1 */
+    --sidebar-ring: 173 80% 36%;
+    --sidebar-muted: 38 11% 40%;        /* darkened from 56% for WCAG AA, matches --muted-foreground */
+    --chat-user-bg: 33 15% 15%;         /* #2B2620 — solid dark bubble */
+    --chat-user-fg: 38 44% 96%;         /* #FAF7F2 */
+    --chat-assistant-bg: 60 17% 98%;
+    --chat-assistant-fg: 33 15% 15%;
+    --chat-thinking: 173 80% 36%;
+    --sources-chip-bg: 80 24% 93%;      /* #EEF1E8 */
+    --sources-chip-fg: 94 13% 37%;      /* #5D6B52 */
+    --scrollbar-thumb: 39 25% 82%;      /* #DDD5C6 */
+  }
+}
+
+@layer base {
+  * { @apply border-border; }
+
+  html {
+    font-family: 'IBM Plex Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    text-rendering: optimizeLegibility;
+  }
+
+  body {
+    @apply bg-background text-foreground antialiased;
+    font-feature-settings: "rlig" 1, "calt" 1, "kern" 1;
+    letter-spacing: -0.011em;
+  }
+}
+
+@layer utilities {
+  *:focus-visible {
+    outline: 2px solid hsl(var(--ring));
+    outline-offset: 2px;
+    border-radius: calc(var(--radius) - 2px);
+  }
+
+  /* Consistent premium card surface — Admin + Document Converter */
+  .surface-card {
+    @apply bg-card border border-border/60 rounded-2xl shadow-sm shadow-black/[0.03];
+  }
+
+
+  /* Scrollbar */
+  .scrollbar-thin {
+    scrollbar-width: thin;
+    scrollbar-color: hsl(var(--scrollbar-thumb)) transparent;
+    scrollbar-gutter: stable; /* prevents layout shift when scrollbar appears */
+  }
+  .scrollbar-thin::-webkit-scrollbar { width: 5px; }
+  .scrollbar-thin::-webkit-scrollbar-track { background: transparent; }
+  .scrollbar-thin::-webkit-scrollbar-thumb {
+    background-color: hsl(var(--scrollbar-thumb));
+    border-radius: 10px;
+  }
+  .scrollbar-thin::-webkit-scrollbar-thumb:hover {
+    background-color: hsl(39 25% 72%);
+  }
+
+  .scrollbar-mobile-hide { scrollbar-width: none; }
+  .scrollbar-mobile-hide::-webkit-scrollbar { display: none; }
+  @media (min-width: 768px) {
+    .scrollbar-mobile-hide {
+      scrollbar-width: thin;
+      scrollbar-color: hsl(var(--scrollbar-thumb)) transparent;
+    }
+    .scrollbar-mobile-hide::-webkit-scrollbar { display: block; width: 5px; }
+    .scrollbar-mobile-hide::-webkit-scrollbar-thumb {
+      background-color: hsl(var(--scrollbar-thumb));
+      border-radius: 10px;
+    }
+  }
+
+  /* Layout helpers */
+  /* max(), not env() alone — env() defaults to 0px on any non-notched
+     device, and paired with a sibling padding-bottom utility (e.g. pb-6)
+     it would win the cascade outright and silently zero out that padding
+     instead of adding to it, since both set the same single CSS property. */
+  .safe-bottom { padding-bottom: max(1.5rem, env(safe-area-inset-bottom, 0px)); }
+  .safe-top    { padding-top: env(safe-area-inset-top, 0px); }
+  .tap-target  { min-width: 44px; min-height: 44px; }
+
+  .line-clamp-1 {
+    display: -webkit-box;
+    -webkit-line-clamp: 1;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+  }
+  .line-clamp-2 {
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+  }
+
+  /* ── User bubble — solid dark fill, asymmetric radius ──────────────── */
+  .user-bubble {
+    background: hsl(var(--chat-user-bg));
+    color: hsl(var(--chat-user-fg));
+    border-radius: 18px 18px 4px 18px;
+  }
+
+  /* ── GINI wordmark — animated shimmer gradient ─────────────────────── */
+  .wordmark-shimmer {
+    background: linear-gradient(90deg, #099198, #3DE0C4, #099198);
+    background-size: 200% auto;
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+    animation: shimmer 3.5s linear infinite;
+  }
+
+  /* Gradient text */
+  .gradient-text {
+    background: linear-gradient(135deg, hsl(var(--primary)) 0%, hsl(180 60% 55%) 100%);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+  }
+}
+
+/* ── AI response prose typography ───────────────────────────────────── */
+.ai-response {
+  font-size: 0.9375rem;   /* 15px */
+  line-height: 1.75;
+  color: hsl(var(--foreground));
+  letter-spacing: -0.01em;
+}
+
+.ai-response h1, .ai-response h2, .ai-response h3, .ai-response h4 {
+  font-weight: 600;
+  letter-spacing: -0.025em;
+  color: hsl(var(--foreground));
+}
+.ai-response p {
+  margin-top: 0.75em;
+  margin-bottom: 0;
+}
+
+.ai-response p:first-child {
+  margin-top: 0;
+}
+
+.ai-response strong {
+  font-weight: 600;
+  color: hsl(var(--foreground));
+}
+
+.ai-response code {
+  font-family: 'JetBrains Mono', 'Fira Code', 'Cascadia Code', ui-monospace, monospace;
+  font-size: 0.875em;
+}
+
+/* ── Animations ─────────────────────────────────────────────────────── */
+@keyframes blink {
+  0%, 50% { opacity: 1; }
+  51%, 100% { opacity: 0; }
+}
+
+@keyframes slide-up {
+  from { opacity: 0; transform: translateY(10px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes fade-in {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+
+@keyframes scale-in {
+  from { opacity: 0; transform: scale(0.94); }
+  to   { opacity: 1; transform: scale(1); }
+}
+
+@keyframes slide-in-right {
+  from { transform: translateX(100%); }
+  to   { transform: translateX(0); }
+}
+
+@keyframes dotBounce {
+  0%, 80%, 100% { transform: translateY(0); opacity: 0.4; }
+  40%           { transform: translateY(-4px); opacity: 1; }
+}
+
+@keyframes shimmer {
+  0%   { background-position: -200% center; }
+  100% { background-position:  200% center; }
+}
+
+/* Indeterminate progress bar — used when real completion % can't be known (e.g. server-side conversion jobs) */
+@keyframes indeterminate-bar {
+  0%   { transform: translateX(-100%); }
+  100% { transform: translateX(350%); }
+}
+.progress-indeterminate {
+  animation: indeterminate-bar 1.3s ease-in-out infinite;
+}
+
+/* ── Animation classes ──────────────────────────────────────────────── */
+.animate-fade-in    { animation: fade-in 0.25s ease-out both; }
+.animate-slide-up   { animation: slide-up 0.25s ease-out both; }
+.animate-scale-in   { animation: scale-in 0.2s ease-out both; }
+.animate-slide-in-right { animation: slide-in-right 0.25s ease-out both; }
+
+.typing-cursor { animation: blink 1s infinite; }
+
+@media (prefers-reduced-motion: reduce) {
+  .animate-fade-in, .animate-slide-up, .animate-scale-in, .animate-slide-in-right,
+  .typing-cursor, .wordmark-shimmer, .progress-indeterminate, .dot-bounce {
+    animation: none !important;
+  }
+}
+
+/* ── Sidebar active item ─────────────────────────────────────────────── */
+.sidebar-active-item {
+  background: hsl(var(--sidebar-accent));
+  font-weight: 600;
+}
+
+/* ── Header gradient separator ──────────────────────────────────────── */
+.header-gradient-line::after {
+  content: '';
+  position: absolute;
+  bottom: 0; left: 0; right: 0;
+  height: 1px;
+  background: linear-gradient(90deg,
+    transparent 0%,
+    hsl(var(--primary) / 0.35) 30%,
+    hsl(262 83% 65% / 0.25) 60%,
+    transparent 100%
+  );
+}

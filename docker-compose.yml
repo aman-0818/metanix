@@ -1,0 +1,268 @@
+services:
+  # ─────────────────────────────────────────────────────────────
+  # PostgreSQL — primary database
+  # ─────────────────────────────────────────────────────────────
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: ${DB_NAME:-gini_dev_db}
+      POSTGRES_USER: ${DB_USER:-gini_user}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-Welcome1234}
+    ports:
+      - "127.0.0.1:5433:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    # Explicit max_connections — the image's unconfigured default is 100,
+    # which gunicorn (10 workers x 10 threads = up to 100 request-handling
+    # slots) plus celery workers plus django-admin/shell connections can run
+    # right up against. 200 gives real headroom.
+    command: postgres -c max_connections=200
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U gini_user"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ─────────────────────────────────────────────────────────────
+  # Redis — distributed cache + Celery broker + SSE pub/sub
+  # FIX: replaces in-memory Django cache (not shared across
+  #      instances) and enables Celery background task queue.
+  # ─────────────────────────────────────────────────────────────
+  redis:
+    image: redis:7-alpine
+    command: redis-server --appendonly yes
+    ports:
+      - "127.0.0.1:6379:6379"
+    volumes:
+      - redis_data:/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ─────────────────────────────────────────────────────────────
+  # Django Backend — WSGI via gunicorn+gthread
+  # FIX: every view here is a synchronous DRF APIView (including the
+  #      SSE stream endpoint), so uvicorn's event loop had nothing
+  #      async to actually run — effective concurrency was just
+  #      --workers (4). gunicorn --workers 10 --threads 10 gives up
+  #      to 100 real concurrent request-handling slots.
+  # ─────────────────────────────────────────────────────────────
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    env_file:
+      - ./backend/.env
+    environment:
+      # DEBUG is sourced from .env (env_file above), not hardcoded here — a
+      # compose-level `environment:` entry always wins over `env_file:`, which
+      # previously made it impossible to ever run this stack with DEBUG=False.
+      DATABASE_URL: postgresql://${DB_USER:-gini_user}:${DB_PASSWORD:-Welcome1234}@postgres:5432/${DB_NAME:-gini_dev_db}
+      DB_ENGINE: django.db.backends.postgresql
+      DB_NAME: ${DB_NAME:-gini_dev_db}
+      DB_USER: ${DB_USER:-gini_user}
+      DB_PASSWORD: ${DB_PASSWORD:-Welcome1234}
+      DB_HOST: postgres
+      DB_PORT: "5432"
+      DB_CONN_MAX_AGE: "60"
+      ALLOWED_HOSTS: localhost,127.0.0.1,backend,gini.aionos.ai
+      CORS_ALLOWED_ORIGINS: http://localhost:3000,http://localhost:5173,https://gini.aionos.ai
+      # Not previously overridden here (fell through to .env's
+      # http://localhost:8000 only) -- added so the nginx-fronted domain is
+      # trusted for CSRF once this is deployed for real. localhost:8000 kept
+      # for direct-to-backend dev access.
+      CSRF_TRUSTED_ORIGINS: http://localhost:8000,https://gini.aionos.ai
+      REDIS_URL: redis://redis:6379/1
+      CELERY_BROKER_URL: redis://redis:6379/0
+      # CELERY_RESULT_BACKEND intentionally not overridden here — settings.py
+      # defaults to 'django-db' so admins can inspect failed tasks in the
+      # Django admin (django_celery_results is installed for exactly this).
+    ports:
+      - "127.0.0.1:8000:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    # Dev-only seed: creates/updates the admin user (from .env) and a second
+    # "devuser" account with full admin/superuser rights (so both the .env
+    # admin and devuser can access everything without Azure AD).
+    command: >
+      sh -c "python manage.py migrate &&
+             python manage.py create_admin &&
+             python manage.py shell -c 'from accounts.models import User as U; u, _ = U.objects.get_or_create(username=\"devuser\", defaults={\"email\": \"devuser@aionos.local\"}); u.role = \"admin\"; u.is_staff = True; u.is_superuser = True; u.has_document_converter = True; u.set_password(\"DevUser123!\"); u.save()' &&
+             gunicorn multimodel.wsgi:application --workers 10 --threads 10 --worker-class gthread --timeout 150 --bind 0.0.0.0:8000"
+    volumes:
+      - ./backend:/app
+      - backend_media:/app/media
+    restart: unless-stopped
+
+  # ─────────────────────────────────────────────────────────────
+  # Celery Worker — chat post-processing (light: summarization LLM
+  # call + a few DB writes). Split from the "documents" worker below
+  # so a backlog of slow PPTX/OCR/conversion jobs can never starve
+  # chat post-processing (matches CELERY_TASK_ROUTES in settings.py).
+  #      - Separate process (doesn't block main Django threads)
+  #      - Horizontally scalable (add more worker containers)
+  #      - Shared across all backend instances via Redis broker
+  # ─────────────────────────────────────────────────────────────
+  celery-worker-chat:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    env_file:
+      - ./backend/.env
+    environment:
+      DB_ENGINE: django.db.backends.postgresql
+      DB_NAME: ${DB_NAME:-gini_dev_db}
+      DB_USER: ${DB_USER:-gini_user}
+      DB_PASSWORD: ${DB_PASSWORD:-Welcome1234}
+      DB_HOST: postgres
+      DB_PORT: "5432"
+      DB_CONN_MAX_AGE: "60"
+      REDIS_URL: redis://redis:6379/1
+      CELERY_BROKER_URL: redis://redis:6379/0
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      backend:
+        # backend's HEALTHCHECK only passes once gunicorn is serving
+        # requests, which only happens after `migrate` completes — so this
+        # also guarantees the schema exists before celery starts consuming.
+        condition: service_healthy
+    # -c 8 = 8 concurrent workers; tasks here are fast (LLM summarize call +
+    # a couple of DB writes), so a higher count costs little.
+    command: celery -A multimodel worker -l info -c 8 -Q chat_post --hostname=chat_post@%h
+    restart: unless-stopped
+    # Override the image's HTTP healthcheck (inherited from the backend
+    # Dockerfile) — this container runs no web server, so that check would
+    # never succeed. `celery inspect ping` is the correct liveness probe here.
+    healthcheck:
+      test: ["CMD-SHELL", "celery -A multimodel inspect ping -d chat_post@$$(hostname) || exit 1"]
+      interval: 15s
+      timeout: 10s
+      retries: 5
+      start_period: 20s
+    volumes:
+      - ./backend:/app
+      - backend_media:/app/media
+
+  # ─────────────────────────────────────────────────────────────
+  # Celery Worker — documents (heavy: PPTX rendering, OCR, format
+  # conversion — can take seconds to minutes per job). Isolated from
+  # chat_post above so this queue backing up never delays chat.
+  # ─────────────────────────────────────────────────────────────
+  celery-worker-documents:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    env_file:
+      - ./backend/.env
+    environment:
+      DB_ENGINE: django.db.backends.postgresql
+      DB_NAME: ${DB_NAME:-gini_dev_db}
+      DB_USER: ${DB_USER:-gini_user}
+      DB_PASSWORD: ${DB_PASSWORD:-Welcome1234}
+      DB_HOST: postgres
+      DB_PORT: "5432"
+      DB_CONN_MAX_AGE: "60"
+      REDIS_URL: redis://redis:6379/1
+      CELERY_BROKER_URL: redis://redis:6379/0
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      backend:
+        condition: service_healthy
+    command: celery -A multimodel worker -l info -c 4 -Q documents --hostname=documents@%h
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "celery -A multimodel inspect ping -d documents@$$(hostname) || exit 1"]
+      interval: 15s
+      timeout: 10s
+      retries: 5
+      start_period: 20s
+    volumes:
+      - ./backend:/app
+      - backend_media:/app/media
+
+  # ─────────────────────────────────────────────────────────────
+  # Frontend — React dev server
+  # ─────────────────────────────────────────────────────────────
+  frontend:
+    # vite@7 requires Node >=20.19 — node:18 logs an EBADENGINE warning and
+    # can misbehave at runtime.
+    image: node:20-alpine
+    working_dir: /app
+    environment:
+      VITE_API_URL: http://localhost:8000
+    ports:
+      - "5173:5173"
+    volumes:
+      - ./Frontend:/app
+    command: sh -c "npm install && npm run dev"
+
+  # ─────────────────────────────────────────────────────────────
+  # Frontend static build — one-shot. Vite's dev server (`frontend`
+  # above) isn't meant for production, so nginx serves the built
+  # `npm run build` output directly instead of proxying to it. This
+  # container just builds into the shared `frontend_dist` volume and
+  # exits; `frontend` (dev, :5173) is untouched.
+  # ─────────────────────────────────────────────────────────────
+  frontend-build:
+    image: node:20-alpine
+    working_dir: /app
+    volumes:
+      - ./Frontend:/app
+      - frontend_dist:/app/dist
+    command: sh -c "npm install && npm run build"
+    restart: "no"
+
+  # ─────────────────────────────────────────────────────────────
+  # Nginx — reverse proxy + TLS termination for https://gini.aionos.ai.
+  # Serves the built SPA directly, proxies /api/, /django-admin/, /auth/,
+  # /media/, /static/ to backend. See nginx/nginx.conf.
+  # Uses the real corporate wildcard cert (*.aionos.ai), bind-mounted from
+  # ./nginx/certs — no certbot/Let's Encrypt in this deployment.
+  # ─────────────────────────────────────────────────────────────
+  nginx:
+    image: nginx:alpine
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    entrypoint: ["sh", "/entrypoint.sh"]
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./nginx/entrypoint.sh:/entrypoint.sh:ro
+      - ./nginx/certs:/etc/nginx/certs:ro
+      - frontend_dist:/usr/share/nginx/html:ro
+      - backend_media:/app/media:ro
+    depends_on:
+      frontend-build:
+        condition: service_completed_successfully
+      backend:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "--no-check-certificate", "-qO-", "https://localhost/"]
+      interval: 15s
+      timeout: 10s
+      retries: 5
+      start_period: 10s
+
+volumes:
+  postgres_data:
+  redis_data:
+  backend_media:
+  frontend_dist:
+
+networks:
+  default:
+    name: gini-network

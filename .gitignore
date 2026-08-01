@@ -1,0 +1,81 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+.venv/
+venv/
+ENV/
+env/
+*.egg-info/
+dist/
+build/
+
+# Django
+*.log
+db.sqlite3
+db.sqlite3-journal
+/backend/media/
+/backend/staticfiles/
+/backend/logs/
+
+# Environment
+.env
+.env.local
+.env.production
+*.env
+!.env.example
+backup.env
+
+# Node.js
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+
+# Frontend Build
+/frontend/dist/
+/frontend/.vite/
+/frontend/.turbo/
+
+# IDE
+.vscode/
+.idea/
+.claude/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Windows
+Thumbs.db
+desktop.ini
+
+# Logs
+logs/
+*.log
+
+# NSSM
+nssm/
+nssm.zip
+
+# Backups
+*.backup
+*.bak
+*.sql
+*.dump
+/db-backup/
+
+# Certificates
+*.pem
+*.key
+*.crt
+
+# Sensitive files
+secrets/
+*.secrets
+
+# Ops backups (DB dumps, SSL cert/key material pulled from servers) — never committed
+/ops-backups/

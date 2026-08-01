@@ -1,0 +1,31 @@
+# Secrets — never bake these into an image layer
+.env
+.env.*
+!.env.example
+
+# Version control
+.git
+.gitignore
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+*.egg-info/
+
+# Local runtime data (mounted as volumes, not part of the image)
+logs/
+media/
+staticfiles/
+
+# Editor/OS cruft
+.vscode/
+.idea/
+.DS_Store
+
+# Tests / dev tooling
+.pytest_cache/
+.coverage
+htmlcov/

@@ -1,0 +1,64 @@
+# Django core
+Django==4.2.17
+djangorestframework==3.15.2
+django-cors-headers==4.3.1
+djangorestframework-simplejwt==5.5.1
+
+# Authentication & security
+PyJWT[crypto]==2.8.0
+cryptography>=42.0.0
+
+# Configuration
+python-decouple==3.8
+
+# Database drivers
+psycopg2-binary>=2.9.11
+
+# HTTP
+requests>=2.31.0
+httpx>=0.27.0
+h2>=4.1.0
+
+# LLM routing — handles all providers, retry, streaming, and cost calculation
+
+# Document processing
+PyPDF2>=3.0.0
+pdfplumber>=0.10.0
+python-docx>=1.1.0
+openpyxl>=3.1.0
+
+# Document conversion
+Pillow>=10.0.0
+pandas>=2.0.0
+reportlab>=4.0.0
+markdown>=3.5.0
+html2text>=2020.1.16
+beautifulsoup4>=4.12.0
+PyMuPDF>=1.24.0
+pdf2docx>=0.5.8
+
+# Presentation generation
+python-pptx>=1.0.0
+
+# Utilities
+setuptools>=67.6.1
+
+# Production WSGI server — every view in this codebase is a sync DRF
+# APIView, so gunicorn+gthread gives real concurrency (workers x threads)
+# instead of uvicorn's effective 4 (one per --workers process, no async
+# views to actually benefit from an event loop).
+gunicorn>=21.0.0
+
+# Kept in case a genuinely async view is added later; unused by the
+# docker-compose/Dockerfile serve command as of this change.
+uvicorn[standard]>=0.30.0
+
+# Production static files
+whitenoise>=6.5.0
+
+# Redis — distributed cache, Celery broker, SSE pub/sub
+redis>=5.0.0
+
+# Celery — async task queue (presentation generation, LLM background jobs)
+celery[redis]>=5.3.0
+django-celery-results>=2.5.0
