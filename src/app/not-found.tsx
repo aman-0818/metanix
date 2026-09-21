@@ -1,0 +1,2 @@
+import { Button } from "@/components/ui";
+export default function NotFound() { return <section className="container section error-page"><span className="eyebrow">404 / Page not found</span><h1 className="display">Let’s find the<br/>right direction.</h1><p className="body-large text-secondary">This page may have moved, or the address may be incomplete.</p><div className="button-group"><Button href="/">Back to home</Button><Button href="/solutions" variant="secondary">Explore solutions</Button></div></section>; }
