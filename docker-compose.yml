@@ -3,7 +3,8 @@ services:
   # PostgreSQL — primary database
   # ─────────────────────────────────────────────────────────────
   postgres:
-    image: postgres:17-alpine
+    build: ./postgres
+    image: metanix-postgres:17-vector
     environment:
       POSTGRES_DB: ${DB_NAME:-gini_dev_db}
       POSTGRES_USER: ${DB_USER:-gini_user}
@@ -88,12 +89,13 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
-    # Dev-only seed: creates/updates the admin user (from .env) and a second
-    # "devuser" account with full admin/superuser rights (so both the .env
-    # admin and devuser can access everything without Azure AD).
+    # Dev-only seed: creates/updates the admin user (from .env), adds the
+    # second "devuser" account, and seeds the DB-backed model provider list
+    # that the frontend model picker calls via /admin/llm-providers/.
     command: >
       sh -c "python manage.py migrate &&
              python manage.py create_admin &&
+             python manage.py populate_llm_providers &&
              python manage.py shell -c 'from accounts.models import User as U; u, _ = U.objects.get_or_create(username=\"devuser\", defaults={\"email\": \"devuser@aionos.local\"}); u.role = \"admin\"; u.is_staff = True; u.is_superuser = True; u.has_document_converter = True; u.set_password(\"DevUser123!\"); u.save()' &&
              gunicorn multimodel.wsgi:application --workers 10 --threads 10 --worker-class gthread --timeout 150 --bind 0.0.0.0:8000"
     volumes:
@@ -159,6 +161,13 @@ services:
   # chat_post above so this queue backing up never delays chat.
   # ─────────────────────────────────────────────────────────────
   celery-worker-documents:
+    mem_limit: 2g
+    cpus: 2
+    pids_limit: 128
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
     build:
       context: ./backend
       dockerfile: Dockerfile
@@ -203,6 +212,7 @@ services:
     working_dir: /app
     environment:
       VITE_API_URL: http://localhost:8000
+      CHOKIDAR_USEPOLLING: "true"
     ports:
       - "5173:5173"
     volumes:

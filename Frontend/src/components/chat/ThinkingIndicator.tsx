@@ -1,16 +1,18 @@
+import { Brand } from '@/components/Brand';
+import { useChatStore } from '@/hooks/useChatStore';
 export function ThinkingIndicator({ stillWorking = false }: { stillWorking?: boolean }) {
+  const mode = useChatStore((s) => s.chatMode);
   return (
-    <div className="flex items-start animate-slide-up">
-      <div className="surface-card px-5 py-4 flex items-center gap-2">
-        <div className="flex gap-[5px]">
-          <span className="dot-bounce w-[7px] h-[7px] rounded-full bg-chat-thinking" style={{ animation: 'dotBounce 1.1s infinite ease-in-out' }} />
-          <span className="dot-bounce w-[7px] h-[7px] rounded-full bg-chat-thinking" style={{ animation: 'dotBounce 1.1s infinite ease-in-out 0.15s' }} />
-          <span className="dot-bounce w-[7px] h-[7px] rounded-full bg-chat-thinking" style={{ animation: 'dotBounce 1.1s infinite ease-in-out 0.3s' }} />
-        </div>
-        {stillWorking && (
-          <span className="text-xs text-muted-foreground animate-fade-in">Still working…</span>
-        )}
-      </div>
+    <div className="flex items-center gap-3 py-5 animate-fade-in" role="status">
+      <Brand compact className="[&_img]:w-7 [&_img]:h-7" />
+      <span className="text-sm text-muted-foreground">
+        {stillWorking
+          ? 'Still working on it…'
+          : mode === 'presentation'
+            ? 'Building your presentation…'
+            : 'Thinking it through…'}
+      </span>
+      <span className="w-1.5 h-1.5 rounded-full bg-primary animate-pulse" />
     </div>
   );
 }

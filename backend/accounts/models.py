@@ -206,7 +206,10 @@ class User(AbstractUser):
         return f"{self.username} ({self.get_role_display()})"
 
     def is_admin(self):
-        return self.role == 'admin'
+        # Treat Django superusers/staff as admin-capable even if a legacy or
+        # partially-synced role string is not set to 'admin'. This keeps the
+        # backend endpoints and the UI consistent with the actual auth flags.
+        return self.role == 'admin' or self.is_superuser or self.is_staff
 
     def is_regular_user(self):
         return self.role == 'user'

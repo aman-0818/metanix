@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'; // useState kept for isInitialized guard
-import { Loader2 } from 'lucide-react';
+import { WorkspaceLoading } from '@/components/Brand';
 import { useAuthStore } from '@/hooks/useAuthStore';
 import { LoginPage } from '@/components/auth/LoginPage';
 import { ModelSelector } from '@/components/auth/ModelSelector';
@@ -16,9 +16,7 @@ const Index = () => {
 
   if (!isInitialized) {
     return (
-      <div className="flex items-center justify-center min-h-[100dvh] bg-background">
-        <Loader2 className="w-8 h-8 animate-spin text-primary" />
-      </div>
+      <WorkspaceLoading />
     );
   }
 

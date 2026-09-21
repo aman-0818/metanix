@@ -1,3 +1,6 @@
+import { Brand } from '@/components/Brand';
+import { PDFTools } from '@/components/converter/PDFTools';
+import { ThemeToggle } from '@/components/ThemeToggle';
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
@@ -22,30 +25,13 @@ const formatBytes = (bytes: number) => {
   return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i];
 };
 
-const FORMAT_COLORS: Record<string, { bg: string; text: string; border: string }> = {
-  pdf:  { bg: 'bg-red-500/10',    text: 'text-red-600',    border: 'border-red-500/30' },
-  docx: { bg: 'bg-blue-500/10',   text: 'text-blue-600',   border: 'border-blue-500/30' },
-  doc:  { bg: 'bg-blue-500/10',   text: 'text-blue-600',   border: 'border-blue-500/30' },
-  xlsx: { bg: 'bg-emerald-500/10',text: 'text-emerald-600',border: 'border-emerald-500/30' },
-  xls:  { bg: 'bg-emerald-500/10',text: 'text-emerald-600',border: 'border-emerald-500/30' },
-  csv:  { bg: 'bg-emerald-500/10',text: 'text-emerald-600',border: 'border-emerald-500/30' },
-  pptx: { bg: 'bg-orange-500/10', text: 'text-orange-600', border: 'border-orange-500/30' },
-  ppt:  { bg: 'bg-orange-500/10', text: 'text-orange-600', border: 'border-orange-500/30' },
-  png:  { bg: 'bg-violet-500/10', text: 'text-violet-600', border: 'border-violet-500/30' },
-  jpg:  { bg: 'bg-violet-500/10', text: 'text-violet-600', border: 'border-violet-500/30' },
-  jpeg: { bg: 'bg-violet-500/10', text: 'text-violet-600', border: 'border-violet-500/30' },
-  webp: { bg: 'bg-violet-500/10', text: 'text-violet-600', border: 'border-violet-500/30' },
-  txt:  { bg: 'bg-slate-500/10',  text: 'text-slate-600',  border: 'border-slate-500/30' },
-  html: { bg: 'bg-amber-500/10',  text: 'text-amber-600',  border: 'border-amber-500/30' },
-};
-const fmtColor = (ext: string) =>
-  FORMAT_COLORS[ext.toLowerCase()] ?? { bg: 'bg-primary/10', text: 'text-primary', border: 'border-primary/30' };
+const fmtColor = (_ext: string) => ({ bg: 'bg-accent', text: 'text-accent-foreground', border: 'border-primary/15' });
 
 const CATEGORY_META: Record<string, { icon: any; color: string; label: string }> = {
-  documents:     { icon: FileText,        color: 'text-blue-500',    label: 'Documents' },
-  spreadsheets:  { icon: FileSpreadsheet, color: 'text-emerald-500', label: 'Spreadsheets' },
-  presentations: { icon: Presentation,   color: 'text-orange-500',  label: 'Presentations' },
-  images:        { icon: FileImage,       color: 'text-violet-500',  label: 'Images' },
+  documents:     { icon: FileText,        color: 'text-primary',    label: 'Documents' },
+  spreadsheets:  { icon: FileSpreadsheet, color: 'text-primary', label: 'Spreadsheets' },
+  presentations: { icon: Presentation,   color: 'text-primary',  label: 'Presentations' },
+  images:        { icon: FileImage,       color: 'text-primary',  label: 'Images' },
 };
 
 // ── Component ─────────────────────────────────────────────────────────────────
@@ -59,6 +45,7 @@ export default function DocumentConverter() {
   useEffect(() => { initializeAuth(); }, [initializeAuth]);
 
   const [formats, setFormats]               = useState<ConverterFormats | null>(null);
+  const maxUploadMB = formats?.max_upload_size_mb ?? MAX_UPLOAD_SIZE_MB;
   const [history, setHistory]               = useState<ConversionJob[]>([]);
   const [selectedFile, setSelectedFile]     = useState<File | null>(null);
   const [availableOutputs, setAvailableOutputs] = useState<ConverterOutputs | null>(null);
@@ -70,6 +57,39 @@ export default function DocumentConverter() {
   const [showHistory, setShowHistory]       = useState(false);
   const [lastJob, setLastJob]               = useState<ConversionJob | null>(null);
   const [confirmDeleteId, setConfirmDeleteId] = useState<number | null>(null);
+
+  const conversionPending = lastJob?.status === 'pending' || lastJob?.status === 'processing';
+  const conversionBusy = isConverting || conversionPending;
+
+  // Conversion is asynchronous: a 202 response means the worker has accepted
+  // the job. Follow its existing status endpoint until the download is ready.
+  useEffect(() => {
+    if (!lastJob || !conversionPending) return;
+    const controller = new AbortController();
+    let timer: ReturnType<typeof setTimeout>;
+    const poll = async () => {
+      try {
+        const job = await apiService.request<ConversionJob>(`/admin/converter/${lastJob.id}/status/`, { signal: controller.signal });
+        if (controller.signal.aborted) return;
+        setLastJob(job);
+        setHistory(previous => previous.map(item => item.id === job.id ? job : item));
+        if (job.status === 'completed') { setError(''); return; }
+        if (job.status === 'failed') { setError(job.error_message || 'Conversion failed. Please try another file.'); return; }
+      } catch {
+        if (controller.signal.aborted) return;
+        setError('Unable to check progress. Retrying; you can also check conversion history.');
+      }
+      timer = setTimeout(poll, 2000);
+    };
+    timer = setTimeout(poll, 1200);
+    return () => { controller.abort(); clearTimeout(timer); };
+  }, [lastJob?.id, conversionPending]);
+
+  useEffect(() => {
+    if (!showHistory || !history.some(job => job.status === 'pending' || job.status === 'processing')) return;
+    const timer = setInterval(loadHistory, 3000);
+    return () => clearInterval(timer);
+  }, [showHistory, history]);
 
   const loadFormats = async () => {
     try { const d = await apiService.getConverterFormats(); setFormats(d); }
@@ -88,8 +108,8 @@ export default function DocumentConverter() {
 
   const handleFileSelect = useCallback(async (file: File) => {
     setSelectedFile(file); setError(''); setTargetFormat(''); setLastJob(null); setAvailableOutputs(null);
-    if (file.size > MAX_UPLOAD_SIZE_MB * 1024 * 1024) {
-      setError(`File exceeds the ${MAX_UPLOAD_SIZE_MB}MB upload limit`);
+    if (file.size > maxUploadMB * 1024 * 1024) {
+      setError(`File exceeds the ${maxUploadMB}MB upload limit`);
       return;
     }
     const ext = file.name.split('.').pop()?.toLowerCase() || '';
@@ -109,7 +129,7 @@ export default function DocumentConverter() {
   }, [handleFileSelect]);
 
   const handleConvert = async () => {
-    if (!selectedFile || !targetFormat) return;
+    if (!selectedFile || !targetFormat || selectedFile.size > maxUploadMB * 1024 * 1024) return;
     setIsConverting(true); setError('');
 
     const controller = new AbortController();
@@ -117,7 +137,9 @@ export default function DocumentConverter() {
 
     try {
       const result = await apiService.convertDocument(selectedFile, targetFormat, quality, controller.signal);
-      setLastJob(result.job); loadHistory();
+      setLastJob(result.job);
+      if (result.job.status === 'failed') setError(result.job.error_message || 'Conversion failed. Please try another file.');
+      loadHistory();
     } catch (err: any) {
       if (err.name !== 'AbortError') setError(err.message || 'Conversion failed');
     } finally {
@@ -132,19 +154,19 @@ export default function DocumentConverter() {
 
   const handleDownload = async (job: ConversionJob) => {
     if (!job.output_url) return;
+    setError('');
     try {
-      const res = await apiService.authFetch(job.output_url);
-      if (!res.ok) throw new Error(`Download failed: ${res.status}`);
-      const blob = await res.blob();
+      const blob = await apiService.downloadConversion(job.id);
       const blobUrl = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = blobUrl;
-      a.download = `${job.original_filename.split('.')[0]}.${job.target_format}`;
+      a.download = `${job.original_filename.replace(/\.[^.]+$/, '')}.${job.target_format}`;
       document.body.appendChild(a);
       a.click();
       document.body.removeChild(a);
-      URL.revokeObjectURL(blobUrl);
+      setTimeout(() => URL.revokeObjectURL(blobUrl), 1000);
     } catch (err) {
+      setError(err instanceof Error ? err.message : 'Download failed. Please try again.');
       console.error('Download error:', err);
     }
   };
@@ -181,7 +203,7 @@ export default function DocumentConverter() {
           <p className="text-sm text-muted-foreground mb-6">
             You don't have permission to access the Document Converter. Contact your administrator to request access.
           </p>
-          <button onClick={() => navigate('/')}
+          <button aria-label="Back to workspace" onClick={() => navigate('/')}
             className="px-6 py-2.5 rounded-xl bg-primary text-primary-foreground text-sm font-semibold hover:bg-primary/90 transition-colors">
             Return to Chat
           </button>
@@ -195,21 +217,22 @@ export default function DocumentConverter() {
     <div className="min-h-[100dvh] bg-background flex flex-col">
 
       {/* ── Header ── */}
-      <header className="h-14 flex items-center px-4 sm:px-6 gap-3 bg-background/95 backdrop-blur-sm border-b border-border/60 sticky top-0 z-10 header-gradient-line">
-        <button onClick={() => navigate('/')}
+      <header className="h-[76px] flex items-center px-4 sm:px-6 gap-3 bg-background/95 backdrop-blur-sm border-b border-border/60 sticky top-0 z-10">
+        <button aria-label="Back to workspace" onClick={() => navigate('/')}
           className="w-9 h-9 rounded-xl flex items-center justify-center hover:bg-muted transition-all hover:scale-105 active:scale-95 shrink-0">
           <ArrowLeft className="w-4 h-4" />
         </button>
         <div className="flex items-center gap-2.5 flex-1 min-w-0">
-          <div className="w-8 h-8 rounded-xl bg-gradient-to-br from-indigo-500 to-purple-500 flex items-center justify-center shadow-sm shadow-indigo-500/25 shrink-0">
-            <FileType className="w-4 h-4 text-white" />
-          </div>
-          <div className="min-w-0">
+          <Brand />
+          <span className="h-6 w-px bg-border mx-2 hidden sm:block" />
+          <div className="min-w-0 hidden sm:block">
             <h1 className="text-sm font-bold tracking-tight truncate">Document Converter</h1>
-            <p className="text-[10px] text-muted-foreground hidden sm:block">Convert any document, any format</p>
+            <p className="text-[10px] text-muted-foreground hidden sm:block">File studio</p>
           </div>
         </div>
         <button
+          aria-label="Conversion history"
+          aria-expanded={showHistory}
           onClick={() => setShowHistory(!showHistory)}
           className={cn(
             'flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-medium transition-all border',
@@ -226,18 +249,22 @@ export default function DocumentConverter() {
             )}>{history.length}</span>
           )}
         </button>
+        <ThemeToggle />
       </header>
 
       {/* ── Main ── */}
-      <main className="flex-1 max-w-3xl mx-auto w-full px-4 sm:px-6 py-8 space-y-6">
-
+      <main className="flex-1 max-w-3xl mx-auto w-full px-4 sm:px-6 py-10 sm:py-12 space-y-7">
+        <div className="page-intro"><span className="eyebrow">WORKSPACE / FILE STUDIO</span><h1>Convert, edit, and organize.</h1><p>Split, merge, unlock, or convert documents with the tools below.</p></div>
+        <PDFTools maxUploadMB={maxUploadMB} acceptedInputs={Object.keys(formats?.input_formats || {})} selectedFile={selectedFile} />
+        <h2 className="text-lg font-semibold">Convert a file</h2>
+        <ol className="grid grid-cols-4 gap-2 py-2" aria-label="Conversion progress">{['Upload', 'Select format', 'Convert', 'Download'].map((label, index) => { const step = lastJob?.status === 'completed' ? 3 : conversionBusy ? 2 : selectedFile ? 1 : 0; return <li key={label} aria-current={index === step ? 'step' : undefined} className={cn('flex items-center gap-2 text-[11px] sm:text-xs', index <= step ? 'text-primary' : 'text-muted-foreground')}><span className={cn('w-6 h-6 rounded-full flex items-center justify-center border shrink-0 text-[10px]', index === step ? 'bg-primary text-primary-foreground border-primary' : 'border-border')}>{index < step ? <Check size={12} /> : index + 1}</span>{label}</li>; })}</ol>
         {/* ── Drop Zone ── */}
         <div
-          onDragOver={handleDragOver}
+          onDragOver={conversionBusy ? undefined : handleDragOver}
           onDragLeave={handleDragLeave}
-          onDrop={handleDrop}
+          onDrop={conversionBusy ? undefined : handleDrop}
           className={cn(
-            'relative rounded-2xl border-2 border-dashed transition-all duration-200 overflow-hidden',
+            'relative rounded-2xl border border-dashed transition-all duration-200 overflow-hidden',
             isDragging
               ? 'border-primary bg-primary/5 scale-[1.01]'
               : selectedFile
@@ -246,24 +273,25 @@ export default function DocumentConverter() {
           )}
         >
           {!selectedFile ? (
-            <label className="flex flex-col items-center justify-center py-14 sm:py-20 cursor-pointer gap-4">
-              <input ref={fileInputRef} type="file" className="hidden"
+            <label className="flex flex-col items-center justify-center py-14 sm:py-20 cursor-pointer focus-within:ring-2 focus-within:ring-inset focus-within:ring-ring gap-4">
+              <input ref={fileInputRef} type="file" className="sr-only"
+                aria-label="Choose a file to convert"
                 onChange={e => e.target.files?.[0] && handleFileSelect(e.target.files[0])}
                 accept={formats ? Object.keys(formats.input_formats).map(f => `.${f}`).join(',') : undefined}
               />
               <div className={cn(
                 'w-16 h-16 rounded-2xl flex items-center justify-center transition-transform duration-200',
-                'bg-gradient-to-br from-indigo-500/15 to-purple-500/15',
+                'bg-accent',
                 isDragging && 'scale-110'
               )}>
-                <Upload className={cn('w-7 h-7 transition-colors', isDragging ? 'text-primary' : 'text-indigo-500')} />
+                <Upload className={cn('w-7 h-7 transition-colors', isDragging ? 'text-primary' : 'text-primary')} />
               </div>
               <div className="text-center">
                 <p className="text-base font-semibold mb-1">
                   {isDragging ? 'Drop to upload' : 'Drop your file here'}
                 </p>
                 <p className="text-sm text-muted-foreground">or <span className="text-primary font-medium underline underline-offset-2">browse from device</span></p>
-                <p className="text-xs text-muted-foreground/60 mt-2">PDF · DOCX · XLSX · PPTX · PNG · JPG · and more</p>
+                <p className="text-xs text-muted-foreground mt-3 max-w-md px-4 leading-relaxed">{formats ? Object.keys(formats.input_formats).map(ext => ext.toUpperCase()).join(' · ') : 'Loading supported formats…'}</p>
               </div>
             </label>
           ) : (
@@ -280,7 +308,7 @@ export default function DocumentConverter() {
                     {availableOutputs && <><span>·</span><span className="capitalize">{availableOutputs.category}</span></>}
                   </div>
                 </div>
-                <button onClick={handleReset}
+                <button disabled={conversionBusy} aria-label="Remove selected file" onClick={handleReset}
                   className="w-8 h-8 rounded-xl flex items-center justify-center hover:bg-muted text-muted-foreground transition-all hover:text-foreground shrink-0">
                   <X className="w-4 h-4" />
                 </button>
@@ -303,6 +331,8 @@ export default function DocumentConverter() {
                   return (
                     <button
                       key={ext}
+                      disabled={conversionBusy}
+                      aria-pressed={targetFormat === ext}
                       onClick={() => setTargetFormat(ext)}
                       className={cn(
                         'flex items-center gap-2 px-3.5 py-2 rounded-xl border font-semibold text-sm transition-all',
@@ -330,6 +360,8 @@ export default function DocumentConverter() {
                   {Object.entries(formats.quality_presets).map(([key, preset]) => (
                     <button
                       key={key}
+                      disabled={conversionBusy}
+                      aria-pressed={quality === key}
                       onClick={() => setQuality(key)}
                       className={cn(
                         'flex items-center gap-2 px-3.5 py-2 rounded-xl border text-sm font-medium transition-all',
@@ -355,9 +387,9 @@ export default function DocumentConverter() {
                     .{selectedFile.name.split('.').pop()}
                   </div>
                   <div className="flex-1 flex items-center gap-1">
-                    <div className="flex-1 h-px bg-gradient-to-r from-border/60 via-primary/30 to-border/60" />
+                    <div className="flex-1 h-px bg-border" />
                     <Zap className="w-3.5 h-3.5 text-primary shrink-0" />
-                    <div className="flex-1 h-px bg-gradient-to-r from-border/60 via-primary/30 to-border/60" />
+                    <div className="flex-1 h-px bg-border" />
                   </div>
                   <div className={cn('flex items-center gap-2 px-3 py-2 rounded-xl border text-sm font-bold uppercase', destColor.bg, destColor.text, destColor.border)}>
                     <FileType className="w-3.5 h-3.5" />
@@ -378,35 +410,36 @@ export default function DocumentConverter() {
 
             {/* Convert button + progress */}
             <div className="p-5 space-y-3">
-              {isConverting && (
+              {conversionPending && <button onClick={handleReset} className="text-xs text-primary underline">Start another conversion</button>}
+              {conversionBusy && (
                 <div className="space-y-1.5">
                   <div className="flex items-center justify-between text-xs text-muted-foreground">
-                    <span>Converting… this may take a moment</span>
+                    <span>{lastJob?.status === 'pending' ? 'Queued for processing…' : 'Converting… this may take a moment'}</span>
                     <button
-                      onClick={handleCancelConvert}
+                      onClick={isConverting ? handleCancelConvert : () => setShowHistory(true)}
                       className="text-destructive hover:underline font-medium"
                     >
-                      Cancel
+                      {isConverting ? 'Cancel upload' : 'View in history'}
                     </button>
                   </div>
                   <div className="h-1.5 rounded-full bg-muted overflow-hidden relative" role="progressbar" aria-label="Converting" aria-busy="true">
-                    <div className="absolute inset-y-0 left-0 w-1/3 rounded-full bg-gradient-to-r from-indigo-500 to-primary progress-indeterminate" />
+                    <div className="absolute inset-y-0 left-0 w-1/3 rounded-full bg-primary progress-indeterminate" />
                   </div>
                 </div>
               )}
               <button
                 onClick={handleConvert}
-                disabled={!targetFormat || isConverting}
+                disabled={!targetFormat || conversionBusy || selectedFile.size > maxUploadMB * 1024 * 1024}
                 className={cn(
                   'w-full flex items-center justify-center gap-2.5 py-3 rounded-xl font-semibold text-sm transition-all',
-                  isConverting
+                  conversionBusy
                     ? 'bg-primary/60 text-primary-foreground cursor-wait'
                     : targetFormat
-                      ? 'bg-gradient-to-r from-indigo-500 to-primary text-white hover:opacity-90 shadow-md shadow-primary/20 hover:shadow-lg hover:shadow-primary/25'
+                      ? 'bg-primary text-primary-foreground hover:opacity-90'
                       : 'bg-muted text-muted-foreground cursor-not-allowed'
                 )}
               >
-                {isConverting ? (
+                {conversionBusy ? (
                   <><Loader2 className="w-4 h-4 animate-spin" />Converting…</>
                 ) : (
                   <><Zap className="w-4 h-4" />Convert{targetFormat ? ` to ${targetFormat.toUpperCase()}` : ''}</>
@@ -472,7 +505,7 @@ export default function DocumentConverter() {
         )}
 
         {/* ── Error (no file selected) ── */}
-        {error && !selectedFile && (
+        {error && (!selectedFile || !availableOutputs) && (
           <div className="flex items-center gap-3 p-3 rounded-xl bg-destructive/8 border border-destructive/25 text-destructive text-sm">
             <AlertCircle className="w-4 h-4 shrink-0" />
             <span>{error}</span>
@@ -521,7 +554,7 @@ export default function DocumentConverter() {
                   <span className="text-xs px-1.5 py-0.5 rounded-full bg-muted text-muted-foreground">{history.length}</span>
                 )}
               </div>
-              <button onClick={loadHistory} className="w-7 h-7 rounded-lg hover:bg-muted flex items-center justify-center text-muted-foreground">
+              <button aria-label="Refresh conversion history" onClick={loadHistory} className="w-7 h-7 rounded-lg hover:bg-muted flex items-center justify-center text-muted-foreground">
                 <RefreshCw className="w-3.5 h-3.5" />
               </button>
             </div>
@@ -582,14 +615,14 @@ export default function DocumentConverter() {
                           </button>
                         </div>
                       ) : (
-                        <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity shrink-0">
+                        <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 focus-within:opacity-100 transition-opacity shrink-0">
                           {job.status === 'completed' && job.output_url && (
-                            <button onClick={() => handleDownload(job)}
+                            <button aria-label={`Download ${job.original_filename}`} onClick={() => handleDownload(job)}
                               className="w-7 h-7 rounded-lg hover:bg-emerald-500/10 hover:text-emerald-600 text-muted-foreground flex items-center justify-center transition-colors">
                               <Download className="w-3.5 h-3.5" />
                             </button>
                           )}
-                          <button onClick={() => setConfirmDeleteId(job.id)}
+                          <button aria-label={`Delete ${job.original_filename}`} onClick={() => setConfirmDeleteId(job.id)}
                             className="w-7 h-7 rounded-lg hover:bg-destructive/10 hover:text-destructive text-muted-foreground flex items-center justify-center transition-colors">
                             <Trash2 className="w-3.5 h-3.5" />
                           </button>

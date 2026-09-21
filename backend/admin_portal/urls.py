@@ -1,11 +1,17 @@
 from django.urls import path
 from . import views
+from .knowledge_views import KnowledgeListView, KnowledgeDetailView
+from .converter_views import PDFOperationView
 
 urlpatterns = [
+    path('converter/operations/', PDFOperationView.as_view(), name='converter-operations'),
+    path('knowledge/', KnowledgeListView.as_view(), name='knowledge-list'),
+    path('knowledge/<int:pk>/', KnowledgeDetailView.as_view(), name='knowledge-detail'),
     # Dashboard
     path('dashboard/stats/', views.admin_dashboard_stats, name='admin-dashboard-stats'),
 
     # Admin — User management
+    path('users/local/', views.admin_create_local_user, name='admin-local-user-create'),
     path('users/', views.admin_user_list, name='admin-users'),
     path('users/search/', views.admin_user_search, name='admin-user-search'),
     path('users/sync/', views.admin_user_sync, name='admin-user-sync'),

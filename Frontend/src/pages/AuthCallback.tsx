@@ -1,3 +1,4 @@
+import { Brand } from '@/components/Brand';
 import { useEffect, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { useAuthStore } from '@/hooks/useAuthStore';
@@ -38,12 +39,13 @@ const AuthCallback = () => {
   }, [exchangeAzureCode, location.search, navigate]);
 
   return (
-    <div className="min-h-[100dvh] flex items-center justify-center bg-gradient-to-br from-background via-background to-accent/30 p-4">
+    <div className="min-h-[100dvh] flex items-center justify-center bg-background p-4">
       <div className="surface-card p-8 text-center max-w-md w-full">
+        <Brand className="mb-8" />
         {error ? (
           <>
             <h1 className="text-xl font-semibold mb-2">Sign-in failed</h1>
-            <p className="text-sm text-destructive">{error}</p>
+            <p className="text-sm text-destructive" role="alert">{error}</p><a href="/" className="inline-block text-sm text-primary underline mt-5">Back to sign in</a>
           </>
         ) : (
           <>

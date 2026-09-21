@@ -1,3 +1,4 @@
+import { useEscapeKey } from '@/hooks/useEscapeKey';
 import { useEffect, useState } from 'react';
 import { useAuthStore } from '@/hooks/useAuthStore';
 import { apiService } from '@/lib/api';
@@ -14,6 +15,7 @@ const REFRESH_INTERVAL_MS = 20_000;
 export function UsageBar() {
   const { user, refreshUser } = useAuthStore();
   const [showBreakdown, setShowBreakdown] = useState(false);
+  useEscapeKey(showBreakdown, () => setShowBreakdown(false));
   const [byModel, setByModel] = useState<ModelUsage[]>([]);
 
   useEffect(() => {
@@ -45,7 +47,7 @@ export function UsageBar() {
     <div className="relative ml-auto">
       <button
         onClick={() => setShowBreakdown((v) => !v)}
-        aria-haspopup="listbox"
+        aria-controls="usage-breakdown"
         aria-expanded={showBreakdown}
         title="Your token usage and cost across all models"
         className="flex flex-col items-end gap-1 rounded-md px-2 py-1 hover:bg-secondary transition-colors"
@@ -66,7 +68,7 @@ export function UsageBar() {
       {showBreakdown && (
         <>
           <div className="fixed inset-0 z-10" onClick={() => setShowBreakdown(false)} />
-          <div role="listbox" aria-label="Usage by model" className="absolute top-[calc(100%+8px)] right-0 w-[260px] bg-card border border-border rounded-[14px] shadow-xl p-3 z-20 animate-scale-in">
+          <div id="usage-breakdown" role="region" aria-label="Usage by model" className="absolute top-[calc(100%+8px)] right-0 w-[260px] bg-card border border-border rounded-[14px] shadow-xl p-3 z-20 animate-scale-in">
             <div className="text-xs font-semibold text-muted-foreground mb-2">Usage by model</div>
             {byModel.length === 0 ? (
               <div className="text-xs text-muted-foreground">No usage yet</div>

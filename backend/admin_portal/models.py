@@ -2,6 +2,7 @@ from django.db import models
 from django.conf import settings
 from django.utils import timezone
 from django.db.models import F
+from .vector_field import VectorField
 
 
 class LLMProvider(models.Model):
@@ -229,6 +230,7 @@ CHAT_MODE_CHOICES = [
     ('code', 'Code Assistant'),
     ('summarize', 'Summarizer'),
     ('document', 'Document Q&A'),
+    ('knowledge', 'Company Knowledge'),
     ('presentation', 'Presentation Creator'),
 ]
 
@@ -272,6 +274,7 @@ class Conversation(models.Model):
                                 null=True, blank=True, related_name='conversations')
     chat_mode = models.CharField(max_length=20, choices=CHAT_MODE_CHOICES,
                                  default='general', db_index=True)
+    context_started_at = models.DateTimeField(null=True, blank=True)
     last_export_format = models.CharField(max_length=10, blank=True, default='',
                                           help_text="Format of the most recent file export in this "
                                                     "conversation (docx/pdf/xlsx/csv/md/pptx) — lets a "
@@ -376,11 +379,13 @@ class Message(models.Model):
 
 
 class ConversationSummary(models.Model):
-    """Auto-generated summary when conversation exceeds token limit."""
+    """Topic-scoped summary of messages evicted from the recent context window."""
     conversation = models.OneToOneField(Conversation, on_delete=models.CASCADE,
                                         related_name='summary')
     summary = models.TextField()
     original_token_count = models.IntegerField(default=0)
+    covered_through = models.DateTimeField(null=True, blank=True)
+    topic_started_at = models.DateTimeField(null=True, blank=True)
     summarized_at = models.DateTimeField(auto_now=True)
     is_active = models.BooleanField(default=True)
 
@@ -421,6 +426,46 @@ class Document(models.Model):
         return self.original_filename
 
 
+class WebSearchUsage(models.Model):
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE)
+    date = models.DateField()
+    count = models.PositiveIntegerField(default=0)
+    last_search_at = models.DateTimeField(null=True)
+
+    class Meta:
+        constraints = [models.UniqueConstraint(fields=['user', 'date'], name='unique_daily_web_usage')]
+
+
+class KnowledgeDocument(models.Model):
+    """One installation is one company; access uses existing roles and users."""
+    owner = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT)
+    title = models.CharField(max_length=255)
+    file = models.FileField(upload_to='knowledge_private/%Y/%m/%d/')
+    file_type = models.CharField(max_length=10)
+    version = models.PositiveIntegerField(default=1)
+    allowed_roles = models.JSONField(default=list, blank=True)
+    allowed_users = models.ManyToManyField(settings.AUTH_USER_MODEL, blank=True,
+                                          related_name='knowledge_grants')
+    status = models.CharField(max_length=20, default='pending', db_index=True)
+    error = models.TextField(blank=True, default='')
+    embedding_model = models.CharField(max_length=255, blank=True, default='')
+    embedding_dimensions = models.PositiveIntegerField(default=0)
+    chunk_count = models.PositiveIntegerField(default=0)
+    updated_at = models.DateTimeField(auto_now=True)
+
+
+class EmbeddingChunk(models.Model):
+    document = models.ForeignKey(KnowledgeDocument, on_delete=models.CASCADE, related_name='chunks')
+    chunk_text = models.TextField()
+    chunk_index = models.PositiveIntegerField()
+    version = models.PositiveIntegerField()
+    embedding = VectorField()
+
+    class Meta:
+        constraints = [models.UniqueConstraint(fields=['document', 'version', 'chunk_index'],
+                                              name='unique_knowledge_chunk')]
+
+
 class ConversionJob(models.Model):
     """Track document conversion jobs."""
     STATUS_CHOICES = [
@@ -436,6 +481,10 @@ class ConversionJob(models.Model):
     original_format = models.CharField(max_length=20)
     target_format = models.CharField(max_length=20)
     quality = models.CharField(max_length=20, default='high')
+    operation = models.CharField(max_length=30, default='convert')
+    options = models.JSONField(default=dict, blank=True)
+    progress = models.PositiveIntegerField(default=0)
+    progress_stage = models.CharField(max_length=100, blank=True, default='Queued')
     
     input_file = models.FileField(upload_to='conversions/input/')
     output_file = models.FileField(upload_to='conversions/output/', null=True, blank=True)
@@ -458,6 +507,15 @@ class ConversionJob(models.Model):
     
     def __str__(self):
         return f"{self.original_filename} -> {self.target_format} ({self.status})"
+
+
+class ConversionInput(models.Model):
+    job = models.ForeignKey(ConversionJob, on_delete=models.CASCADE, related_name='additional_inputs')
+    file = models.FileField(upload_to='conversions/input/')
+    position = models.PositiveIntegerField()
+
+    class Meta:
+        ordering = ['position']
 
 
 class LLMUsageLog(models.Model):

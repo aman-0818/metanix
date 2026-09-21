@@ -11,6 +11,7 @@ interface User {
   last_name?: string;
   role: 'admin' | 'user';
   is_superuser?: boolean;
+  is_staff?: boolean;
   has_document_converter?: boolean;
   cost_quota_usd?: string | null;
   cost_used_usd?: string;
@@ -77,6 +78,7 @@ export const useAuthStore = create<AuthState>()(
             last_name: response.user.last_name,
             role: response.user.role,
             is_superuser: response.user.is_superuser,
+            is_staff: response.user.is_staff,
             has_document_converter: response.user.has_document_converter,
             cost_quota_usd: response.user.cost_quota_usd,
             cost_used_usd: response.user.cost_used_usd,
@@ -154,6 +156,7 @@ export const useAuthStore = create<AuthState>()(
             last_name: response.user.last_name,
             role: response.user.role,
             is_superuser: response.user.is_superuser,
+            is_staff: response.user.is_staff,
             has_document_converter: response.user.has_document_converter,
             cost_quota_usd: response.user.cost_quota_usd,
             cost_used_usd: response.user.cost_used_usd,
@@ -236,19 +239,25 @@ export const useAuthStore = create<AuthState>()(
       refreshUser: async () => {
         try {
           const data = await apiService.getCurrentUser();
-          const currentUser = get().user;
-          if (currentUser) {
-            set({
-              user: {
-                ...currentUser,
-                first_name: data.first_name,
-                last_name: data.last_name,
-                has_document_converter: data.has_document_converter,
-                cost_quota_usd: data.cost_quota_usd,
-                cost_used_usd: data.cost_used_usd,
-              },
-            });
-          }
+          const user: User = {
+            id: data.id,
+            username: data.username,
+            email: data.email,
+            first_name: data.first_name,
+            last_name: data.last_name,
+            role: data.role,
+            is_superuser: data.is_superuser,
+            is_staff: data.is_staff,
+            has_document_converter: data.has_document_converter,
+            cost_quota_usd: data.cost_quota_usd,
+            cost_used_usd: data.cost_used_usd,
+          };
+          set({
+            user,
+            username: user.username,
+            role: user.role,
+            isAuthenticated: true,
+          });
         } catch (error) {
           console.error('Failed to refresh user profile:', error);
         }

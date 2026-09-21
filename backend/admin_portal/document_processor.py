@@ -6,6 +6,7 @@ import csv
 import io
 import logging
 import os
+import zipfile
 
 from django.conf import settings
 
@@ -169,6 +170,10 @@ _MAGIC_SIGNATURES = {
     # DOCX/XLSX are both ZIP-based Office Open XML containers.
     'docx': (b'PK\x03\x04', b'PK\x05\x06', b'PK\x07\x08'),
     'xlsx': (b'PK\x03\x04', b'PK\x05\x06', b'PK\x07\x08'),
+    'png': (b'\x89PNG\r\n\x1a\n',),
+    'jpg': (b'\xff\xd8\xff',), 'jpeg': (b'\xff\xd8\xff',),
+    'gif': (b'GIF87a', b'GIF89a'), 'bmp': (b'BM',),
+    'tiff': (b'II*\x00', b'MM\x00*'), 'tif': (b'II*\x00', b'MM\x00*'),
 }
 
 
@@ -176,8 +181,11 @@ def _content_matches_type(file, ext: str) -> bool:
     """Best-effort check that the file's actual bytes match its claimed
     extension, independent of the filename."""
     file.seek(0)
-    header = file.read(8)
+    header = file.read(4096)
     file.seek(0)
+
+    if ext == 'webp':
+        return header.startswith(b'RIFF') and header[8:12] == b'WEBP'
 
     signatures = _MAGIC_SIGNATURES.get(ext)
     if signatures:
@@ -189,7 +197,7 @@ def _content_matches_type(file, ext: str) -> bool:
     return b'\x00' not in header
 
 
-def validate_upload(file) -> tuple:
+def validate_upload(file, *, allowed_types=None) -> tuple:
     """
     Validate an uploaded file against configured limits.
 
@@ -200,7 +208,7 @@ def validate_upload(file) -> tuple:
         (file_type, error_message) — error_message is None if valid.
     """
     max_size = getattr(settings, 'MAX_UPLOAD_SIZE_MB', 25) * 1024 * 1024
-    allowed_types = getattr(settings, 'ALLOWED_UPLOAD_TYPES', ['pdf', 'docx', 'txt', 'md', 'csv', 'xlsx'])
+    allowed_types = allowed_types or getattr(settings, 'ALLOWED_UPLOAD_TYPES', ['pdf', 'docx', 'txt', 'md', 'csv', 'xlsx'])
 
     # Get extension
     name = file.name or ''
@@ -215,8 +223,27 @@ def validate_upload(file) -> tuple:
     if file.size > max_size:
         return ext, f'File too large ({file.size / (1024*1024):.1f}MB). Maximum: {max_size / (1024*1024):.0f}MB'
 
+    if not file.size:
+        return ext, 'File is empty'
+
     if not _content_matches_type(file, ext):
         return ext, f'File content does not match the .{ext} extension'
+
+    if ext in ('docx', 'xlsx'):
+        try:
+            with zipfile.ZipFile(file) as archive:
+                entries = archive.infolist()
+                expected = 'word/document.xml' if ext == 'docx' else 'xl/workbook.xml'
+                if expected not in archive.namelist():
+                    return ext, f'File is not a valid {ext.upper()} document'
+                if len(entries) > 10000 or sum(item.file_size for item in entries) > 100 * 1024 * 1024:
+                    return ext, 'Office archive expands beyond the 100 MB processing limit'
+                if any(item.flag_bits & 1 for item in entries):
+                    return ext, 'Encrypted Office archives are unsupported. Upload an unlocked copy.'
+        except zipfile.BadZipFile:
+            return ext, 'Invalid Office archive'
+        finally:
+            file.seek(0)
 
     return ext, None
 

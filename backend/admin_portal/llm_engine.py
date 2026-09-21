@@ -19,6 +19,9 @@ from urllib.parse import urlparse
 import httpx
 from django.conf import settings
 
+from .conversation_context import RESPONSE_GUIDELINES
+from .services.chat_metrics import timed
+
 logger = logging.getLogger(__name__)
 
 
@@ -173,7 +176,7 @@ def _call_anthropic(*, provider, messages, api_key, model, endpoint, max_tokens,
                'max_tokens': max_tokens or 4096, 'temperature': temperature}
     if system_text.strip():
         # Anthropic only caches what's explicitly marked — unlike Azure OpenAI's
-        # automatic prefix caching. The system prompt (identity + memory + summary)
+        # automatic prefix caching. The system prompt (policy + model identity)
         # is the largest block that's identical on every turn of a conversation,
         # so it's the highest-value (and simplest) thing to mark cacheable.
         payload['system'] = [{'type': 'text', 'text': system_text.strip(),
@@ -393,6 +396,7 @@ _PROVIDER_HANDLERS = {
 #  Main public API — non-streaming
 # ---------------------------------------------------------------------------
 
+@timed('provider_complete')
 def call_llm(provider, messages: list, **kwargs) -> dict:
     """
     Route a chat completion request to the correct LLM backend.
@@ -400,13 +404,23 @@ def call_llm(provider, messages: list, **kwargs) -> dict:
     Returns:
         {"content": str, "usage": {...}, "model": str, "latency_ms": int}
     """
+    web_user = kwargs.pop('web_user', None)
+    if web_user is not None:
+        from .services.web_search import enabled
+        if enabled(provider):
+            from .services.web_chat import stream_web_chat
+            result = None
+            for item in stream_web_chat(provider, messages, web_user, **kwargs):
+                if isinstance(item, dict) and 'content' in item:
+                    result = item
+            return result
     api_key = provider.get_api_key()
     model = provider.model_name
     endpoint = provider.api_endpoint
     max_tokens = kwargs.pop('max_tokens', provider.max_tokens)
     temperature = kwargs.pop('temperature', provider.temperature)
 
-    start = time.time()
+    start = time.monotonic()
     handler = _PROVIDER_HANDLERS.get(provider.provider_type, _call_openai_compatible)
     result = _with_retry(
         handler,
@@ -414,7 +428,7 @@ def call_llm(provider, messages: list, **kwargs) -> dict:
         model=model, endpoint=endpoint, max_tokens=max_tokens, temperature=temperature,
         **kwargs,
     )
-    result['latency_ms'] = int((time.time() - start) * 1000)
+    result['latency_ms'] = int((time.monotonic() - start) * 1000)
     result.setdefault('model', model)
     return result
 
@@ -740,6 +754,13 @@ def stream_llm(provider, messages: list, **kwargs):
         str:  Text chunks as they arrive from the LLM
         dict: Final item — {"content", "usage", "model", "latency_ms"}
     """
+    web_user = kwargs.pop('web_user', None)
+    if web_user is not None:
+        from .services.web_search import enabled
+        if enabled(provider):
+            from .services.web_chat import stream_web_chat
+            yield from stream_web_chat(provider, messages, web_user, **kwargs)
+            return
     api_key = provider.get_api_key()
     model = provider.model_name
     endpoint = provider.api_endpoint
@@ -754,8 +775,9 @@ def stream_llm(provider, messages: list, **kwargs):
         yield result
         return
 
-    start = time.time()
+    start = time.monotonic()
     content_parts = []
+    first_token_ms = None
     final_usage = {'prompt_tokens': 0, 'completion_tokens': 0, 'total_tokens': 0}
 
     for item in stream_handler(
@@ -764,12 +786,16 @@ def stream_llm(provider, messages: list, **kwargs):
         **kwargs,
     ):
         if isinstance(item, str):
+            if item and first_token_ms is None:
+                first_token_ms = int((time.monotonic() - start) * 1000)
+                logger.info('chat_stage stage=provider_first_token duration_ms=%s', first_token_ms)
             content_parts.append(item)
             yield item
         elif isinstance(item, dict):
             final_usage = item.get('usage', final_usage)
 
-    latency_ms = int((time.time() - start) * 1000)
+    latency_ms = int((time.monotonic() - start) * 1000)
+    logger.info('chat_stage stage=provider_stream duration_ms=%s', latency_ms)
     full_content = ''.join(content_parts)
 
     # Word-count token fallback for providers that don't return streaming usage
@@ -789,6 +815,7 @@ def stream_llm(provider, messages: list, **kwargs):
         'usage': final_usage,
         'model': model,
         'latency_ms': latency_ms,
+        'first_token_ms': first_token_ms,
     }
 
 
@@ -830,6 +857,20 @@ def get_system_prompt(provider, chat_mode: str = 'general', document_context: Op
     else:
         base_prompt = _DEFAULT_PROMPTS.get(chat_mode, _DEFAULT_PROMPTS['general'])
 
+    # Apply the policy even when an existing database prompt overrides defaults.
+    if base_prompt != RESPONSE_GUIDELINES:
+        base_prompt += '\n\n' + RESPONSE_GUIDELINES
+
+    from .services.web_search import enabled
+    if enabled(provider) and chat_mode not in ('knowledge', 'presentation'):
+        base_prompt += ("\n\nLive web-search response rules:\n"
+            "- Use web_search for requests about latest, current, recent, announced, changed, or government policy information.\n"
+            "- Do not answer a current-information request from memory when search is available.\n"
+            "- After search, answer the user's question directly first. Synthesize the returned evidence; do not merely list search snippets.\n"
+            "- Include the relevant announcement or publication date, distinguish it from today's date, and state uncertainty or conflicting reports.\n"
+            "- Cite the specific returned source URL next to each important claim. Never invent a source, date, quote, or verification.\n"
+            "- Do not expose tool calls or narrate that you are searching. If search fails, say that current verification was unavailable and avoid presenting an unverified claim as fact.")
+
     if document_context:
         base_prompt += f"\n\nDocument context:\n{document_context}"
 
@@ -852,39 +893,7 @@ def get_system_prompt(provider, chat_mode: str = 'general', document_context: Op
 
 
 _DEFAULT_PROMPTS = {
-    'general': (
-        'You are Gini — a sharp, opinionated AI assistant that gives real answers, not textbook summaries.\n\n'
-
-        'RESPONSE PHILOSOPHY:\n'
-        'Lead with an insight or direct take, not "here are some tips." '
-        'Have a point of view. Be the expert friend who gives you the real answer, not the safe corporate one. '
-        'When someone asks the "best way" to do something, give them THE best way with reasoning — not a list of every possible way.\n\n'
-
-        'FORMATTING RULES (apply intelligently based on question complexity):\n'
-        '- **Bold** the most critical concepts or principles — not random words\n'
-        '- Use numbered lists for sequential steps; bullet points for parallel options\n'
-        '- When using numbered lists, ALWAYS use sequential numbers: 1, 2, 3, 4... Never repeat the same number\n'
-        '- Use `code` formatting for commands, tools, file names\n'
-        '- Add a "---" section break before a closing "Bottom line" or "Reality check" for complex answers\n'
-        '- Use 👉 sparingly — only for the single most important rule in a section\n'
-        '- For short conversational questions, respond conversationally — no headers needed\n'
-        '- For complex how-to questions, use structured headers with numbered sections\n\n'
-
-        'VOICE & TONE:\n'
-        '- Confident and direct. Say "use X" not "you might consider X"\n'
-        '- Opinionated where expertise allows. Say "this is the most important step" when it is\n'
-        '- No filler phrases: never open with "Great question!", "Certainly!", "Of course!"\n'
-        '- No generic closings like "I hope this helps!" or "Feel free to ask more questions"\n'
-        '- Never pad responses. If it can be said in 3 words, use 3 words\n\n'
-
-        'CONTENT QUALITY:\n'
-        '- Give complete, actionable answers — not vague generalities\n'
-        '- For technical topics, include real examples (specific tools, platforms, commands)\n'
-        '- When recommending a stack or approach, give the OPTIMIZED recommendation, not everything that exists\n'
-        '- End complex answers with a "Bottom line" or "Reality check" section that distills the core truth\n'
-        '- If unsure about something, say so — but first give your best answer\n'
-        '- Match the user\'s language exactly (Hindi, English, or Hinglish — mirror what they use)\n'
-    ),
+    'general': RESPONSE_GUIDELINES,
     'code': (
         'You are Gini, an expert coding assistant who writes production-quality code.\n\n'
         'RULES:\n'
@@ -911,28 +920,10 @@ _DEFAULT_PROMPTS = {
         '- Prefer the smallest correct change; mention what you deliberately left out and when it would be worth adding'
     ),
     'summarize': (
-        'You are Gini, a research and analysis assistant. Treat every request in this mode as one that deserves '
-        'structured, multi-angle thinking — not a flat summary.\n\n'
-        'IMPORTANT — NO LIVE ACCESS: You have no real-time web search or browsing. Every answer draws on your '
-        'trained knowledge (and any document text provided in context) as of your training cutoff. Never imply '
-        'you looked something up live or checked a current source. If the question depends on something that '
-        'may have changed since your cutoff (prices, current events, latest versions), say so plainly.\n\n'
-        'METHOD:\n'
-        '- Break the question into its real sub-questions before answering — most "analyze X" requests are '
-        'several distinct questions wearing one sentence\n'
-        '- Cover more than one angle deliberately (e.g. technical + business, short-term + long-term, for + against) '
-        'rather than defaulting to a single perspective\n'
-        '- Flag your confidence per claim: distinguish well-established fact, reasonable inference, and speculation '
-        '— do not present a guess with the same certainty as a known fact\n'
-        '- Close with a clear synthesis: what the analysis actually implies, not just a recap of the points made\n\n'
-        'FORMAT:\n'
-        '- Open with the single most important takeaway — one sentence\n'
-        '- Use structured headers/sections for multi-angle analysis; tight bullets for a plain summarization ask\n'
-        '- Highlight critical figures, decisions, or conclusions in **bold**\n'
-        '- When purely summarizing a provided source (not analyzing), keep it proportional to the source and free '
-        'of your own opinions — save synthesis for when the user is asking you to analyze, not just condense\n'
-        '- Multi-angle does not mean long: every sentence must add a distinct angle or fact — cut any that '
-        'restate a point already made under a different heading'
+        'You are Metanix, a research and analysis assistant. Match the requested depth. '
+        'For source summaries, preserve meaning and proportion without adding opinions. '
+        'For analysis, distinguish facts, inference, and uncertainty; use sections only '
+        'when multiple independent aspects need them. Never imply live source verification.'
     ),
     'document': (
         # Deliberately does NOT hand the model an exact quoted escape phrase
@@ -946,7 +937,7 @@ _DEFAULT_PROMPTS = {
         # "read tables row by row" nudge and a softened trigger condition
         # ("only after you've actually checked"), fixed it consistently
         # across repeated trials without weakening the two strong models.
-        'You are Gini, a document analysis assistant. The full content of the '
+        'You are Metanix, a document analysis assistant. The full content of the '
         'document(s) the user attached is provided below as "Document context" — '
         'treat it as the complete, authoritative source for this conversation.\n\n'
         'RULES:\n'

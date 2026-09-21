@@ -1,4 +1,6 @@
-import { Plus, MessageSquare, Search, Trash2, Pencil, Check, X, FileType, PanelLeft, Folder, LogOut, ShieldCheck } from 'lucide-react';
+import { Brand } from '@/components/Brand';
+import { DocumentLibrary } from './DocumentLibrary';
+import { Plus, MessageSquare, Search, Trash2, Pencil, Check, X, FileType, PanelLeft, Folder, LogOut, ShieldCheck, FileText } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { useChatStore } from '@/hooks/useChatStore';
 import { useAuthStore } from '@/hooks/useAuthStore';
@@ -46,8 +48,9 @@ function groupChatsByDate(chats: Chat[]) {
 
 export function ChatSidebar({ chats, onNewChat, onDeleteChat, onRenameChat, user, hasDocumentConverter, collapsed, onToggleCollapsed }: ChatSidebarProps) {
   const { currentChatId, setCurrentChat, activeProjectId, setActiveProjectId } = useChatStore();
-  const { getRole, logout } = useAuthStore();
-  const isAdmin = getRole() === 'admin';
+  const { user: authUser, logout } = useAuthStore();
+  const isAdmin = authUser?.role === 'admin' || authUser?.is_superuser || authUser?.is_staff;
+  const [documentsOpen, setDocumentsOpen] = useState(false);
   const navigate = useNavigate();
   const [searchQuery,    setSearchQuery]   = useState('');
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
@@ -159,14 +162,11 @@ export function ChatSidebar({ chats, onNewChat, onDeleteChat, onRenameChat, user
   };
 
   return (
-    <aside className="flex flex-col h-full bg-sidebar text-sidebar-foreground overflow-hidden">
+    <aside aria-label="Workspace navigation" className="flex flex-col h-full bg-sidebar text-sidebar-foreground overflow-hidden border-r border-sidebar-border/70">
       {/* Header */}
-      <div className={cn('relative flex items-center pt-5 pb-3.5', collapsed ? 'px-3 justify-center' : 'pl-5 pr-[18px]')}>
+      <div className={cn('relative flex items-center h-[76px] shrink-0', collapsed ? 'px-3 justify-center' : 'pl-5 pr-[18px]')}>
         {!collapsed && (
-          <div className="w-full flex flex-col items-center leading-[1.05]">
-            <span className="font-serif italic font-bold text-[30px] wordmark-shimmer">GINI</span>
-            <span className="text-[11px] font-semibold tracking-[0.14em] text-sidebar-muted uppercase mt-[1px]">AIONOS.ai</span>
-          </div>
+          <Brand />
         )}
         <button
           onClick={onToggleCollapsed}
@@ -185,7 +185,7 @@ export function ChatSidebar({ chats, onNewChat, onDeleteChat, onRenameChat, user
         <button
           onClick={onNewChat}
           className={cn(
-            'w-full flex items-center justify-center gap-2.5 rounded-xl bg-gradient-to-br from-primary to-primary/80 text-white font-semibold text-sm transition-all hover:from-primary/90 hover:to-primary/70 active:scale-[0.98] shadow-md shadow-primary/20',
+            'w-full flex items-center justify-center gap-2.5 rounded-lg bg-foreground text-background font-semibold text-sm transition-all hover:bg-primary hover:text-primary-foreground active:scale-[0.98] ',
             collapsed ? 'px-0 py-2.5' : 'px-3.5 py-2.5'
           )}
           title="New chat"
@@ -195,14 +195,17 @@ export function ChatSidebar({ chats, onNewChat, onDeleteChat, onRenameChat, user
           {!collapsed && <span>New chat</span>}
         </button>
 
-        {!collapsed && hasDocumentConverter && (
+        {!collapsed && <p className="eyebrow mt-7 mb-2 px-3">Workspace</p>}
+        <button onClick={() => setDocumentsOpen(true)} className="w-full flex items-center gap-2.5 px-3 py-2.5 rounded-lg text-sidebar-muted text-[13px] hover:bg-sidebar-accent hover:text-foreground" title="Documents" aria-label="Documents"><FileText size={15} className="shrink-0" />{!collapsed && 'Documents'}</button>
+        <DocumentLibrary open={documentsOpen} onOpenChange={setDocumentsOpen} />
+        {hasDocumentConverter && (
           <button
             onClick={() => navigate('/converter')}
-            className="w-full flex items-center justify-center gap-2 px-3 py-2 mt-2 rounded-xl border border-sidebar-border bg-sidebar-accent/60 text-sidebar-foreground text-xs font-medium transition-all hover:bg-sidebar-accent hover:shadow-sm"
+            className="w-full flex items-center gap-2.5 px-3 py-2.5 mt-1 rounded-lg text-sidebar-muted text-[13px] font-medium transition-colors hover:bg-sidebar-accent hover:text-foreground"
             title="Document Converter"
           >
             <FileType className="w-3.5 h-3.5" />
-            <span className="truncate">Converter</span>
+            {!collapsed && <span className="truncate">Converter</span>}
           </button>
         )}
 
@@ -210,14 +213,14 @@ export function ChatSidebar({ chats, onNewChat, onDeleteChat, onRenameChat, user
           <button
             onClick={() => navigate('/admin')}
             className={cn(
-              'w-full flex items-center justify-center gap-2 px-3 py-2 mt-2 rounded-xl border border-sidebar-border bg-sidebar-accent/60 text-sidebar-foreground text-xs font-medium transition-all hover:bg-sidebar-accent hover:shadow-sm',
+              'w-full flex items-center gap-2.5 px-3 py-2.5 mt-1 rounded-lg text-sidebar-muted text-[13px] font-medium transition-colors hover:bg-sidebar-accent hover:text-foreground',
               collapsed && 'px-0'
             )}
-            title="Admin Panel"
-            aria-label="Admin Panel"
+            title="Control center"
+            aria-label="Control center"
           >
             <ShieldCheck className="w-3.5 h-3.5 shrink-0" />
-            {!collapsed && <span className="truncate">Admin Panel</span>}
+            {!collapsed && <span className="truncate">Control center</span>}
           </button>
         )}
       </div>
@@ -228,10 +231,11 @@ export function ChatSidebar({ chats, onNewChat, onDeleteChat, onRenameChat, user
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-sidebar-muted" />
             <input
               type="text"
-              placeholder="Search chats…"
+              aria-label="Search conversations"
+              placeholder="Search conversations…"
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              className="w-full pl-8 pr-3 py-2 text-sm bg-sidebar-accent rounded-lg placeholder:text-sidebar-muted focus:outline-none focus:ring-1 focus:ring-sidebar-ring transition-all"
+              className="w-full pl-8 pr-3 py-2 text-sm bg-background/60 border border-sidebar-border/70 rounded-lg placeholder:text-sidebar-muted focus:outline-none focus:ring-1 focus:ring-sidebar-ring transition-all"
             />
           </div>
         </div>
@@ -289,7 +293,7 @@ export function ChatSidebar({ chats, onNewChat, onDeleteChat, onRenameChat, user
                         </button>
                         <button
                           onClick={(e) => { e.stopPropagation(); setConfirmDeleteProjectId(proj.id); }}
-                          className="p-1.5 rounded-lg text-sidebar-muted opacity-0 group-hover:opacity-100 hover:text-destructive hover:bg-destructive/10 transition-all shrink-0"
+                          className="p-1.5 rounded-lg text-sidebar-muted opacity-0 group-hover:opacity-100 focus-within:opacity-100 hover:text-destructive hover:bg-destructive/10 transition-all shrink-0"
                           aria-label="Delete project"
                         >
                           <Trash2 className="w-3 h-3" />
@@ -312,7 +316,7 @@ export function ChatSidebar({ chats, onNewChat, onDeleteChat, onRenameChat, user
                   </div>
                 )}
                 {projects.length === 0 && !addingProject && !projectError && (
-                  <p className="px-2.5 py-1 text-xs text-sidebar-muted/70">No projects yet</p>
+                  <p className="px-2.5 py-1 text-xs text-sidebar-muted">No projects yet</p>
                 )}
                 {projectError && (
                   <p className="px-2.5 py-1 text-xs text-destructive">{projectError}</p>
@@ -339,7 +343,7 @@ export function ChatSidebar({ chats, onNewChat, onDeleteChat, onRenameChat, user
               {groups.map((group) => (
                 <div key={group.label}>
                   {!collapsed && (
-                    <p className="px-2 mb-1.5 text-[10px] font-bold uppercase tracking-wider text-sidebar-muted/70">
+                    <p className="px-2 mb-1.5 text-[10px] font-bold uppercase tracking-wider text-sidebar-muted">
                       {group.label}
                     </p>
                   )}
@@ -373,17 +377,6 @@ export function ChatSidebar({ chats, onNewChat, onDeleteChat, onRenameChat, user
                       return (
                         <div
                           key={chat.id}
-                          role="button"
-                          tabIndex={0}
-                          aria-label={isEditing ? undefined : `Open chat: ${chat.title}`}
-                          onClick={() => !isEditing && setCurrentChat(chat.id)}
-                          onKeyDown={(e) => {
-                            if (isEditing) return;
-                            if (e.key === 'Enter' || e.key === ' ') {
-                              e.preventDefault();
-                              setCurrentChat(chat.id);
-                            }
-                          }}
                           className={cn(
                             'w-full text-left py-2.5 px-2.5 rounded-lg transition-all group cursor-pointer',
                             isActive ? 'sidebar-active-item' : 'hover:bg-sidebar-accent/60 text-sidebar-foreground'
@@ -447,12 +440,12 @@ export function ChatSidebar({ chats, onNewChat, onDeleteChat, onRenameChat, user
                                     </button>
                                   </div>
                                 ) : (
-                                  <>
-                                    <p className="text-[13.5px] font-medium truncate leading-tight">{chat.title}</p>
-                                    <p className="text-xs text-sidebar-muted mt-0.5">
+                                  <button onClick={() => setCurrentChat(chat.id)} aria-label={`Open chat: ${chat.title}`} aria-current={isActive ? 'page' : undefined} className="block w-full min-w-0 text-left">
+                                    <span className="block text-[13.5px] font-medium truncate leading-tight">{chat.title}</span>
+                                    <span className="block text-xs text-sidebar-muted mt-0.5">
                                       {formatDistanceToNow(new Date(chat.updated_at), { addSuffix: true })}
-                                    </p>
-                                  </>
+                                    </span>
+                                  </button>
                                 )}
                               </div>
 
@@ -490,6 +483,7 @@ export function ChatSidebar({ chats, onNewChat, onDeleteChat, onRenameChat, user
       </div>
 
       {/* Bottom profile chip */}
+      {collapsed && <button onClick={logout} className="icon-button mx-auto mb-2" aria-label="Sign out" title="Sign out"><LogOut size={16} /></button>}
       <div className={cn('flex items-center gap-2.5 border-t border-sidebar-border py-3.5', collapsed ? 'justify-center px-3' : 'px-4')}>
         <div className="w-[30px] h-[30px] rounded-full bg-primary text-primary-foreground flex items-center justify-center text-xs font-bold shrink-0">
           {getInitials(user.name)}

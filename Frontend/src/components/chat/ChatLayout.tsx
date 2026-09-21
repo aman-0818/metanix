@@ -1,5 +1,6 @@
+import { ThemeToggle } from '@/components/ThemeToggle';
 import { useState, useEffect, useCallback } from 'react';
-import { ChevronDown, Menu } from 'lucide-react';
+import { Menu, MessageSquare } from 'lucide-react';
 import { ChatSidebar } from './ChatSidebar';
 import { ChatWindow } from './ChatWindow';
 import { ArtifactPanel } from './ArtifactPanel';
@@ -10,7 +11,7 @@ import { useEscapeKey } from '@/hooks/useEscapeKey';
 import { useFocusTrap } from '@/hooks/useFocusTrap';
 import { apiService } from '@/lib/api';
 import { cn } from '@/lib/utils';
-import type { Chat, LLMProvider } from '@/types/chat';
+import type { Chat } from '@/types/chat';
 
 export function ChatLayout() {
   const { chats, setChats, currentChatId, removeChat, setCurrentChat, setMessages, updateChatTitle } = useChatStore();
@@ -18,10 +19,7 @@ export function ChatLayout() {
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(() => localStorage.getItem('gini-sidebar-collapsed') === 'true');
   const [isMobile, setIsMobile] = useState(false);
-  const [showModelDropdown, setShowModelDropdown] = useState(false);
-  const [availableModels, setAvailableModels] = useState<LLMProvider[]>([]);
 
-  useEscapeKey(showModelDropdown, () => setShowModelDropdown(false));
   useEscapeKey(isMobile && isSidebarOpen, () => setIsSidebarOpen(false));
   const mobileDrawerRef = useFocusTrap<HTMLDivElement>(isMobile && isSidebarOpen);
 
@@ -58,7 +56,6 @@ export function ChatLayout() {
   const loadAvailableModels = async () => {
     try {
       const models = await apiService.getLLMProviders();
-      setAvailableModels(models);
       // A previously-selected model can vanish (deactivated/deleted server-side)
       // while still persisted in this browser — fall back to the default so
       // sending a message doesn't silently target a model that no longer exists.
@@ -69,7 +66,6 @@ export function ChatLayout() {
       }
     } catch (error) {
       console.error('Failed to load available models:', error);
-      setAvailableModels([]);
     }
   };
 
@@ -143,7 +139,6 @@ export function ChatLayout() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentChatId]);
 
-  const activeModel = availableModels.find(m => m.name === selectedModel);
   // The 68px collapsed-rail state is a desktop-only preference persisted in
   // localStorage — it must never apply on mobile, where the drawer always
   // needs its full width regardless of what was last set on desktop.
@@ -166,15 +161,16 @@ export function ChatLayout() {
         aria-modal={isMobile ? true : undefined}
         aria-label={isMobile ? 'Sidebar' : undefined}
         tabIndex={isMobile ? -1 : undefined}
+        hidden={isMobile && !isSidebarOpen}
         className={cn(
           'h-full transition-all duration-300 ease-in-out z-30',
           isMobile ? 'fixed left-0 top-0' : 'relative',
-          isSidebarOpen ? (effectiveCollapsed ? 'w-[68px]' : 'w-72') : 'w-0'
+          isSidebarOpen ? (effectiveCollapsed ? 'w-[68px]' : 'w-[264px]') : 'w-0'
         )}
       >
         <div className={cn(
           'h-full transition-transform duration-300 ease-in-out',
-          effectiveCollapsed ? 'w-[68px]' : 'w-72',
+          effectiveCollapsed ? 'w-[68px]' : 'w-[264px]',
           isSidebarOpen ? 'translate-x-0' : '-translate-x-full'
         )}>
           <ChatSidebar
@@ -191,9 +187,9 @@ export function ChatLayout() {
       </div>
 
       {/* Main content */}
-      <div className="flex-1 flex flex-col min-w-0 relative bg-background">
+      <main className="flex-1 flex flex-col min-w-0 relative bg-background">
         {/* Top row — model selector only (web search toggle lives in the composer now) */}
-        <div className="flex items-center px-7 py-4 relative z-10">
+        <div className="workspace-header relative z-10 shrink-0">
           {/* Sidebar re-open trigger — the sidebar auto-closes below the 768px
               breakpoint (real mobile, or a desktop window snapped/grouped
               narrow), and its own collapse toggle lives inside it, so once
@@ -209,58 +205,17 @@ export function ChatLayout() {
             </button>
           )}
 
-          <div className="relative">
-            <button
-              onClick={() => setShowModelDropdown((v) => !v)}
-              aria-haspopup="listbox"
-              aria-expanded={showModelDropdown}
-              className="flex items-center gap-1.5 bg-card border border-border rounded-md px-3 py-2 text-[13.5px] font-semibold text-foreground shadow-sm hover:border-primary/30 transition-colors"
-            >
-              <span>{activeModel?.display_name || 'Model'}</span>
-              <ChevronDown className={cn('w-3 h-3 transition-transform', showModelDropdown && 'rotate-180')} />
-            </button>
-
-            {showModelDropdown && (
-              <>
-                <div className="fixed inset-0 z-10" onClick={() => setShowModelDropdown(false)} />
-                <div role="listbox" aria-label="Model" className="absolute top-[calc(100%+8px)] left-0 w-[270px] bg-card border border-border rounded-[14px] shadow-xl p-1.5 z-20 animate-scale-in">
-                  {availableModels.map((model) => (
-                    <button
-                      key={model.id}
-                      role="option"
-                      aria-selected={selectedModel === model.name}
-                      onClick={() => { setSelectedModel(model.name, model.id); setShowModelDropdown(false); }}
-                      className={cn(
-                        'w-full flex items-center justify-between gap-2.5 rounded-[10px] px-2.5 py-2.5 text-left transition-colors',
-                        selectedModel === model.name ? 'bg-primary/10' : 'hover:bg-muted/50'
-                      )}
-                    >
-                      <div className="flex flex-col items-start gap-0.5 min-w-0">
-                        <span className="text-[13.5px] font-semibold truncate">{model.display_name}</span>
-                        {model.description && (
-                          <span className="text-xs text-muted-foreground truncate">{model.description}</span>
-                        )}
-                      </div>
-                      {selectedModel === model.name && (
-                        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" className="text-primary shrink-0">
-                          <polyline points="5 13 9 17 19 7" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" />
-                        </svg>
-                      )}
-                    </button>
-                  ))}
-                </div>
-              </>
-            )}
-          </div>
-
+          <MessageSquare size={16} className="text-muted-foreground hidden sm:block" />
+          <div className="min-w-0"><p className="text-sm font-medium truncate">{currentChat?.title || 'Your workspace'}</p><p className="text-[10px] text-muted-foreground mt-0.5 hidden sm:block">{currentChat ? 'Conversation' : 'A fresh space to think'}</p></div>
           <UsageBar />
+          <ThemeToggle />
         </div>
 
         {/* Chat Window */}
         <div className="flex-1 min-h-0">
           <ChatWindow chatId={currentChatId} onConversationsUpdated={loadConversations} />
         </div>
-      </div>
+      </main>
 
       <ArtifactPanel />
     </div>

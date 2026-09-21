@@ -17,6 +17,22 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 from pathlib import Path
 from decouple import config
 
+# Recent verbatim chat history, excluding the system prompt and bounded summary.
+CHAT_CONTEXT_MAX_MESSAGES = config('CHAT_CONTEXT_MAX_MESSAGES', default=24, cast=int)
+CHAT_CONTEXT_TOKEN_BUDGET = config('CHAT_CONTEXT_TOKEN_BUDGET', default=12000, cast=int)
+CHAT_SEMANTIC_MEMORY = config('CHAT_SEMANTIC_MEMORY', default=False, cast=bool)
+CHAT_SEMANTIC_CONTEXT = config('CHAT_SEMANTIC_CONTEXT', default=False, cast=bool)
+EMBEDDING_BACKEND = config('EMBEDDING_BACKEND', default='ollama')
+EMBEDDING_ENDPOINT = config('EMBEDDING_ENDPOINT', default='')
+EMBEDDING_MODEL = config('EMBEDDING_MODEL', default='')
+EMBEDDING_API_KEY = config('EMBEDDING_API_KEY', default='')
+EMBEDDING_DIMENSIONS = config('EMBEDDING_DIMENSIONS', default=384, cast=int)
+WEB_SEARCH_ENABLED = config('WEB_SEARCH_ENABLED', default=False, cast=bool)
+TAVILY_API_KEY = config('TAVILY_API_KEY', default='')
+WEB_SEARCH_DAILY_LIMIT = config('WEB_SEARCH_DAILY_LIMIT', default=30, cast=int)
+WEB_SEARCH_INTERVAL_SECONDS = config('WEB_SEARCH_INTERVAL_SECONDS', default=10, cast=int)
+WEB_SEARCH_DOMAINS = config('WEB_SEARCH_DOMAINS', default='', cast=lambda value: [v.strip() for v in value.split(',') if v.strip()])
+
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
 
@@ -98,25 +114,29 @@ DB_PASSWORD = config('DB_PASSWORD', default='')
 DB_HOST = config('DB_HOST', default='')
 DB_PORT = config('DB_PORT', default='')
 
-DATABASES = {
-    'default': {
-        'ENGINE': config('DB_ENGINE', default='django.db.backends.postgresql'),
-        'NAME': config('DB_NAME', default='gini_db'),
-        'USER': config('DB_USER', default=''),
-        'PASSWORD': config('DB_PASSWORD', default=''),
-        'HOST': config('DB_HOST', default='127.0.0.1'),
-        'PORT': config('DB_PORT', default='5432'),
-        # FIX (DB connection pooling): CONN_MAX_AGE=60 reuses DB connections
-        # within the same thread/worker for up to 60 seconds.
-        # Previously 600s — too long for multi-process deployments (uvicorn + celery
-        # each hold their own connections, exhausting the DB pool).
-        # 60s is a balance: enough to reuse across most requests, short enough
-        # to release connections during idle periods.
-        'CONN_MAX_AGE': config('DB_CONN_MAX_AGE', default=60, cast=int),
-        'OPTIONS': {
-            'connect_timeout': 10,
-        },
+DATABASE_CONFIG = {
+    'ENGINE': DB_ENGINE,
+    'NAME': DB_NAME,
+    'USER': DB_USER,
+    'PASSWORD': DB_PASSWORD,
+    'HOST': DB_HOST,
+    'PORT': DB_PORT,
+    # FIX (DB connection pooling): CONN_MAX_AGE=60 reuses DB connections
+    # within the same thread/worker for up to 60 seconds.
+    # Previously 600s — too long for multi-process deployments (uvicorn + celery
+    # each hold their own connections, exhausting the DB pool).
+    # 60s is a balance: enough to reuse across most requests, short enough
+    # to release connections during idle periods.
+    'CONN_MAX_AGE': config('DB_CONN_MAX_AGE', default=60, cast=int),
+}
+
+if DB_ENGINE == 'django.db.backends.postgresql':
+    DATABASE_CONFIG['OPTIONS'] = {
+        'connect_timeout': 10,
     }
+
+DATABASES = {
+    'default': DATABASE_CONFIG,
 }
 
 # Password validation
@@ -295,6 +315,8 @@ HUGGINGFACE_API_KEY = config('HUGGINGFACE_API_KEY', default='')
 # File upload settings
 MAX_UPLOAD_SIZE_MB = config('MAX_UPLOAD_SIZE_MB', default=25, cast=int)
 ALLOWED_UPLOAD_TYPES = config('ALLOWED_UPLOAD_TYPES', default='pdf,docx,txt,md,csv,xlsx').split(',')
+CONVERTER_ALLOWED_UPLOAD_TYPES = config('CONVERTER_ALLOWED_UPLOAD_TYPES',
+    default='pdf,docx,txt,md,csv,xlsx,png,jpg,jpeg,gif,bmp,tiff,tif,webp').split(',')
 FILE_UPLOAD_MAX_MEMORY_SIZE = MAX_UPLOAD_SIZE_MB * 1024 * 1024
 DATA_UPLOAD_MAX_MEMORY_SIZE = MAX_UPLOAD_SIZE_MB * 1024 * 1024
 
@@ -436,6 +458,7 @@ CELERY_TASK_DEFAULT_QUEUE = 'default'
 # post-processing. Matches the `-Q chat_post` / `-Q documents` queue names
 # consumed by the celery-worker services in docker-compose.yml.
 CELERY_TASK_ROUTES = {
+    'admin_portal.tasks.ingest_knowledge_task': {'queue': 'documents'},
     'admin_portal.tasks.summarize_conversation_task': {'queue': 'chat_post'},
     'admin_portal.tasks.chat_stream_post_process_task': {'queue': 'chat_post'},
     'admin_portal.tasks.generate_pptx_task': {'queue': 'documents'},

@@ -80,6 +80,20 @@ class LLMProviderListSerializer(serializers.ModelSerializer):
 
 class LLMProviderCreateSerializer(serializers.ModelSerializer):
     """Create/update serializer for admin."""
+    def validate_extra_config(self, value):
+        if not isinstance(value, dict):
+            raise serializers.ValidationError('Provider configuration must be a JSON object.')
+        for key, minimum, maximum in [('context_window', 1024, 10000000),
+                                       ('context_max_messages', 2, 200),
+                                       ('context_token_budget', 128, 1000000)]:
+            if key in value and (type(value[key]) is not int or not minimum <= value[key] <= maximum):
+                raise serializers.ValidationError(f'{key} must be an integer between {minimum} and {maximum}.')
+        if 'context_fraction' in value and (type(value['context_fraction']) not in (int, float) or not .05 <= value['context_fraction'] <= .9):
+            raise serializers.ValidationError('context_fraction must be between 0.05 and 0.9.')
+        if 'web_search' in value and type(value['web_search']) is not bool:
+            raise serializers.ValidationError('web_search must be true or false.')
+        return value
+
     class Meta:
         model = LLMProvider
         fields = [
@@ -225,7 +239,7 @@ class ConversationCreateSerializer(serializers.Serializer):
     llm_provider = serializers.IntegerField(required=False, help_text='LLMProvider ID')
     project = serializers.IntegerField(required=False, allow_null=True, help_text='Project ID')
     chat_mode = serializers.ChoiceField(
-        choices=['general', 'code', 'summarize', 'document', 'presentation'],
+        choices=['general', 'code', 'summarize', 'document', 'knowledge', 'presentation'],
         required=False,
         default='general',
     )
@@ -239,12 +253,13 @@ class ChatRequestSerializer(serializers.Serializer):
     llm_provider = serializers.CharField(required=False, help_text='Provider name slug')
     llm_provider_id = serializers.IntegerField(required=False, help_text='Provider ID')
     chat_mode = serializers.ChoiceField(
-        choices=['general', 'code', 'summarize', 'document', 'presentation'],
+        choices=['general', 'code', 'summarize', 'document', 'knowledge', 'presentation'],
         required=False,
         default='general',
     )
     document_ids = serializers.ListField(
         child=serializers.IntegerField(),
+        max_length=10,
         required=False,
         default=list,
     )
@@ -318,6 +333,7 @@ class ConversionJobSerializer(serializers.ModelSerializer):
             'id', 'original_filename', 'original_format', 'target_format',
             'quality', 'file_size', 'output_file_size', 'status',
             'error_message', 'output_url', 'created_at', 'completed_at',
+            'operation', 'progress', 'progress_stage',
         ]
         read_only_fields = fields
     
@@ -328,4 +344,3 @@ class ConversionJobSerializer(serializers.ModelSerializer):
                 return request.build_absolute_uri(f'/api/admin/converter/{obj.id}/download/')
             return f'/api/admin/converter/{obj.id}/download/'
         return None
-

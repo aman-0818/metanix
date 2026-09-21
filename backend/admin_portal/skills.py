@@ -1,7 +1,7 @@
 """
 Automatic intent detection for the "General" chat mode.
 
-Gini's chat modes (general/code/summarize/document/presentation) each carry their own
+Metanix's chat modes (general/code/summarize/document/presentation) each carry their own
 system prompt in llm_engine._DEFAULT_PROMPTS, tuned for that kind of task. Most users
 never bother switching modes for a one-off coding or research question typed while in
 General — this module gives General mode a conservative way to notice that and borrow

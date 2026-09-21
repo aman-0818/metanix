@@ -1,294 +1,258 @@
-/* =====================================================================
-   LoginPage — premium, minimal, enterprise redesign.
-   Uses the app's real design tokens (index.css) instead of a parallel
-   palette — the dark brand panel reuses the --chat-user-bg/fg pair
-   (the same warm dark surface already used for chat bubbles) rather
-   than inventing a separate navy/blue "tech" look.
-   ===================================================================== */
-
-/* ── Root ──
-   No font-family override here — inherits the app's IBM Plex Sans from
-   body (index.css). The previous 'Inter' override was the single
-   biggest reason this page read as a different product. */
 .lp-root {
-  position: relative;
   min-height: 100dvh;
-  display: flex;
-  background: hsl(var(--background));
-  overflow-y: auto;
-  /* Corrected shade of the primary hue (same 173/80 hue+sat, lightness
-     dropped 36%→27%) used only for solid button fills. White text on
-     the raw --primary (L 36%) measures ~3.07:1 — below the 4.5:1 AA
-     floor for 14.4px/600-weight button labels. At L 27% it measures
-     ~5.09:1. See PR notes for the full computation. */
-  --lp-primary-solid: 173 80% 27%;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  background: hsl(var(--card));
 }
-
-/* =====================================================================
-   Login Form Panel (single column — no left brand panel)
-   ===================================================================== */
-.lp-form-side {
+.lp-story {
+  margin: 20px;
+  padding: 32px 42px;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  border: 1px solid hsl(var(--border));
+  border-radius: 20px;
+  background: hsl(var(--secondary));
+  min-height: calc(100dvh - 40px);
+  position: relative;
+  overflow: hidden;
+}
+.lp-story-content {
+  padding: 60px 0;
   position: relative;
   z-index: 1;
-  flex: 1;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 48px;
 }
-
-/* Ambient MagicRings effect — sits behind the card, filling the page */
-.lp-rings-bg {
-  position: absolute;
-  inset: 0;
-  z-index: 0;
-  pointer-events: none;
-}
-
-.lp-card {
-  width: 100%;
-  max-width: 200px;
-  min-width: 0;
-  text-align: center;
-  animation: lp-card-in .4s cubic-bezier(.16,1,.3,1) both;
-}
-
-@keyframes lp-card-in {
-  from { opacity: 0; transform: translateY(12px); }
-  to   { opacity: 1; transform: translateY(0); }
-}
-
-.lp-mobile-logo {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 14px;
-  margin-bottom: 40px;
-}
-
-.lp-logo-full-md {
-  height: 28px;
-  width: auto;
-  object-fit: contain;
-  flex-shrink: 0;
-}
-
-/* ── Form ── */
-.lp-form {
-  display: flex;
-  flex-direction: column;
-  gap: 18px;
-}
-
-.lp-field {
-  display: flex;
-  flex-direction: column;
-  gap: 7px;
-}
-
-.lp-label {
-  font-size: 0.8rem;
+.lp-story h1 {
+  font-size: clamp(36px, 4vw, 60px);
+  line-height: 1.12;
+  letter-spacing: -0.055em;
   font-weight: 500;
-  color: hsl(var(--foreground));
+  margin: 22px 0;
 }
-
-.lp-input-wrap {
-  position: relative;
+.lp-story-content > p {
+  max-width: 370px;
+  color: hsl(var(--muted-foreground));
+  font-size: 16px;
+  line-height: 1.8;
+}
+.lp-capabilities {
+  display: grid;
+  gap: 25px;
+  margin-top: 48px;
+}
+.lp-capabilities > div {
+  display: flex;
+  gap: 15px;
+  align-items: center;
+  font-size: 14px;
+  font-weight: 500;
+}
+.lp-capabilities svg {
+  padding: 10px;
+  box-sizing: content-box;
+  border: 1px solid hsl(var(--border));
+  border-radius: 14px;
+  background: hsl(var(--card) / 0.65);
+  color: hsl(var(--primary));
+  width: 18px;
+  height: 18px;
+}
+.lp-capabilities small {
+  display: block;
+  font-size: 12px;
+  color: hsl(var(--muted-foreground));
+  font-weight: 400;
+  margin-top: 5px;
+}
+.lp-story-footer {
+  display: flex;
+  justify-content: space-between;
+  font-size: 10px;
+  letter-spacing: 0.13em;
+  color: hsl(var(--muted-foreground));
+}
+.lp-form-side {
   display: flex;
   align-items: center;
+  justify-content: center;
+  padding: 100px 40px;
+  position: relative;
+  min-width: 0;
 }
-
-.lp-field-icon {
+.lp-topbar {
   position: absolute;
-  left: 12px;
-  color: hsl(var(--muted-foreground));
-  pointer-events: none;
+  top: 30px;
+  left: 32px;
+  right: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
 }
-
+.lp-topbar > .icon-button {
+  margin-left: auto;
+}
+.lp-card {
+  max-width: 360px;
+  width: 100%;
+}
+.lp-form-heading h2 {
+  font-size: 32px;
+  font-weight: 500;
+  letter-spacing: -0.04em;
+  margin: 14px 0 10px;
+}
+.lp-form-heading p {
+  font-size: 14px;
+  color: hsl(var(--muted-foreground));
+  margin-bottom: 32px;
+}
+.lp-form {
+  display: grid;
+  gap: 22px;
+}
+.lp-field {
+  display: grid;
+  gap: 9px;
+}
+.lp-field label {
+  font-size: 13px;
+  font-weight: 500;
+}
 .lp-input {
   width: 100%;
-  padding: 10px 12px 10px 38px;
-  font-size: 0.9rem;
-  color: hsl(var(--foreground));
-  background: hsl(var(--card));
+  height: 48px;
+  padding: 0 14px;
   border: 1px solid hsl(var(--border));
+  background: hsl(var(--background));
   border-radius: 10px;
-  outline: none;
-  transition: border-color .2s, box-shadow .2s, background .2s;
-  box-sizing: border-box;
+  font-size: 14px;
+  transition:
+    border-color 0.15s,
+    box-shadow 0.15s;
 }
-
-.lp-input::placeholder {
-  color: hsl(var(--muted-foreground) / 0.6);
-}
-
 .lp-input:focus {
-  border-color: hsl(var(--ring));
-  box-shadow: 0 0 0 3px hsl(var(--ring) / 0.15);
-  background: hsl(var(--card));
+  outline: none;
+  border-color: hsl(var(--primary));
+  box-shadow: 0 0 0 3px hsl(var(--primary) / 0.1);
 }
-
-/* ── Error ──
-   hsl(var(--destructive)) text (~#B1482B) on an 8%-tint of the same
-   background computes to ~4.69:1 against the resulting light-pink
-   surface — passes AA. Unchanged from the prior implementation. */
-.lp-error {
+.lp-input::placeholder {
+  color: hsl(var(--muted-foreground));
+}
+.lp-password-wrap {
+  position: relative;
+}
+.lp-password-wrap input {
+  padding-right: 48px;
+}
+.lp-password-wrap button {
+  position: absolute;
+  right: 5px;
+  top: 5px;
+}
+.lp-btn-primary,
+.lp-btn-outline {
   display: flex;
+  gap: 10px;
   align-items: center;
   justify-content: center;
-  gap: 8px;
-  padding: 10px 14px;
-  font-size: 0.82rem;
-  color: hsl(var(--destructive));
-  background: hsl(var(--destructive) / 0.08);
-  border: 1px solid hsl(var(--destructive) / 0.25);
-  border-radius: 10px;
-}
-
-/* ── Primary button (solid fill — used for whichever path is primary) ── */
-.lp-btn-primary {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 8px;
   width: 100%;
-  padding: 11px 20px;
-  font-size: 0.9rem;
-  font-weight: 600;
-  color: hsl(var(--primary-foreground));
-  background: hsl(var(--lp-primary-solid));
-  border: none;
+  height: 48px;
   border-radius: 10px;
-  cursor: pointer;
-  box-shadow: 0 1px 3px rgba(0,0,0,.12);
-  transition: background-color .15s, transform .1s, box-shadow .2s;
+  font-size: 14px;
+  font-weight: 500;
+  transition:
+    background 0.15s,
+    transform 0.15s;
 }
-
-.lp-btn-primary:hover:not(:disabled) {
-  /* Same alpha-blend-on-hover mechanic as hover:bg-primary/90 elsewhere,
-     applied to this page's darkened --lp-primary-solid fill instead of a
-     brightness filter. */
-  background: hsl(var(--lp-primary-solid) / 0.9);
-  box-shadow: 0 2px 8px rgba(0,0,0,.16);
+.lp-btn-primary {
+  background: hsl(var(--foreground));
+  color: hsl(var(--background));
+  margin-top: 4px;
 }
-
-.lp-btn-primary:active:not(:disabled) {
-  transform: scale(.99);
+.lp-btn-primary:hover {
+  background: hsl(var(--primary));
+  color: hsl(var(--primary-foreground));
 }
-
-.lp-btn-primary:disabled {
-  opacity: .55;
-  cursor: not-allowed;
+.lp-btn-outline {
+  border: 1px solid hsl(var(--border));
 }
-
-/* ── Divider ── */
+.lp-btn-outline:hover {
+  background: hsl(var(--muted));
+}
+.lp-root button:disabled {
+  opacity: 0.6;
+  cursor: wait;
+}
 .lp-divider {
   display: flex;
   align-items: center;
   gap: 12px;
+  font-size: 11px;
   color: hsl(var(--muted-foreground));
-  font-size: 0.75rem;
 }
-
-.lp-divider::before,
-.lp-divider::after {
+.lp-divider:before,
+.lp-divider:after {
   content: '';
-  flex: 1;
   height: 1px;
+  flex: 1;
   background: hsl(var(--border));
 }
-
-/* ── Outline button (secondary path, e.g. local credentials when SSO leads) ── */
-.lp-btn-outline {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 8px;
-  width: 100%;
-  padding: 11px 20px;
-  font-size: 0.9rem;
-  font-weight: 600;
-  color: hsl(var(--foreground));
-  background: hsl(var(--card));
-  border: 1px solid hsl(var(--border));
+.lp-error {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  background: hsl(var(--destructive) / 0.07);
+  color: hsl(var(--destructive));
+  border: 1px solid hsl(var(--destructive) / 0.2);
+  padding: 12px;
   border-radius: 10px;
-  cursor: pointer;
-  transition: background .2s, border-color .2s, box-shadow .2s;
+  font-size: 13px;
 }
-
-.lp-btn-outline:hover:not(:disabled) {
-  /* Literal off-white, not hsl(var(--muted)) — that token is beige and is
-     used app-wide, so changing it would affect far more than this button. */
-  background: #F6F5F3;
-  border-color: hsl(var(--ring) / 0.4);
-}
-
-.lp-btn-outline:disabled {
-  opacity: .55;
-  cursor: not-allowed;
-}
-
-/* ── Spinner ── */
-.lp-spinner {
-  display: inline-block;
-  width: 14px; height: 14px;
-  border: 2px solid rgba(255,255,255,.35);
-  border-top-color: #fff;
-  border-radius: 50%;
-  animation: lp-spin .6s linear infinite;
+.lp-error svg {
   flex-shrink: 0;
 }
-
-.lp-spinner-dark {
-  border-color: hsl(var(--border));
-  border-top-color: hsl(var(--foreground));
+.lp-help {
+  font-size: 11px;
+  text-align: center;
+  color: hsl(var(--muted-foreground));
+  margin-top: 25px;
+  line-height: 1.7;
 }
-
-@keyframes lp-spin {
-  to { transform: rotate(360deg); }
+.lp-footer {
+  position: absolute;
+  bottom: 32px;
+  font-size: 10px;
+  letter-spacing: 0.12em;
+  display: flex;
+  gap: 16px;
+  align-items: center;
 }
-
-/* =====================================================================
-   Responsive
-   ===================================================================== */
-@media (max-width: 860px) {
+.lp-footer span {
+  font-size: 11px;
+  letter-spacing: 0;
+  color: hsl(var(--muted-foreground));
+}
+@media (max-width: 1023px) {
   .lp-root {
-    overflow-y: auto;
+    grid-template-columns: 1fr;
   }
-
-  .lp-form-side {
-    padding: 32px 28px;
+  .lp-story {
+    display: none;
   }
-}
-
-@media (max-width: 560px) {
   .lp-form-side {
     min-height: 100dvh;
-    padding: 32px 20px;
-    align-items: flex-start;
-    padding-top: 48px;
+    padding: 120px 24px 100px;
   }
-
-  .lp-input {
-    font-size: 16px; /* prevent iOS zoom */
-  }
-
-  .lp-btn-primary,
-  .lp-btn-outline {
-    padding: 13px 20px;
-    min-height: 48px;
+  .lp-card {
+    max-width: 390px;
   }
 }
-
-/* =====================================================================
-   Reduced motion
-   ===================================================================== */
-@media (prefers-reduced-motion: reduce) {
-  .lp-card { animation: none; }
-  .lp-btn-primary,
-  .lp-btn-outline {
-    transition: none;
+@media (max-height: 700px) and (min-width: 1024px) {
+  .lp-story-content {
+    padding: 32px 0;
   }
-  .lp-btn-primary:active:not(:disabled) { transform: none; }
+  .lp-capabilities {
+    margin-top: 28px;
+    gap: 18px;
+  }
 }

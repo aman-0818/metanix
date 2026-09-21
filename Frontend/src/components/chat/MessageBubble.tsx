@@ -1,3 +1,4 @@
+import { Brand } from '@/components/Brand';
 import { cn } from '@/lib/utils';
 import type { Message, ExportFileType } from '@/types/chat';
 import { FileDown, Download, Palette, Lightbulb, Copy, Check, RefreshCw, Loader2 } from 'lucide-react';
@@ -139,7 +140,7 @@ export const MessageBubble = memo(function MessageBubble({
           <div className="user-bubble rounded-[18px_18px_4px_18px] px-[17px] py-[13px]">
             <p className="text-[15.5px] leading-[1.6] whitespace-pre-wrap break-words">{message.content}</p>
           </div>
-          <div className={cn('flex justify-end items-center gap-2 mt-1 px-1 transition-opacity duration-150', copyError ? 'opacity-100' : 'opacity-0 group-hover/message:opacity-100')}>
+          <div className={cn('flex justify-end items-center gap-2 mt-1 px-1 transition-opacity duration-150', copyError ? 'opacity-100' : 'opacity-0 group-hover/message:opacity-100 focus-within:opacity-100')}>
             {copyError && <span className="text-[10px] text-destructive">{copyError}</span>}
             <span className="text-[10px] text-muted-foreground">{formattedTime}</span>
             <button
@@ -163,8 +164,9 @@ export const MessageBubble = memo(function MessageBubble({
        instead of inventing a new visual language. ─── */
   return (
     <div className="flex justify-start items-start animate-slide-up group/message">
-      <div className="max-w-[88%] min-w-0 pb-1">
-        <div className="surface-card px-5 py-4">
+      <div className="w-full min-w-0 pb-1">
+        <div className="assistant-message">
+          <div className="flex items-center gap-2 mb-3"><Brand compact className="[&_img]:w-6 [&_img]:h-6" /><span className="text-xs font-semibold">Metanix</span>{isStreaming && <span className="text-[10px] text-muted-foreground" role="status">Writing…</span>}</div>
           <div className="ai-response">
             <MarkdownRenderer content={displayContent} isStreaming={isStreaming} />
             {isStreaming && isAssistant && (
@@ -198,7 +200,7 @@ export const MessageBubble = memo(function MessageBubble({
             <a
               href={message.export_file_url}
               download
-              className="inline-flex items-center gap-2 px-4 py-2 rounded-xl text-white text-sm font-semibold transition-all shadow-lg hover:shadow-xl hover:scale-[1.02] active:scale-[0.98] bg-gradient-to-r from-blue-600 to-blue-500"
+              className="inline-flex items-center gap-2 px-4 py-2 rounded-xl text-white text-sm font-semibold transition-all bg-primary text-primary-foreground hover:bg-primary/90"
             >
               <FileDown className="w-4 h-4" />
               Download {EXPORT_FILE_LABELS[message.export_file_type ?? 'docx']}
@@ -214,7 +216,7 @@ export const MessageBubble = memo(function MessageBubble({
               {themeInfo && (
                 <div className="flex items-center gap-1.5">
                   <Palette className="w-3.5 h-3.5 text-muted-foreground" />
-                  <span className={cn('text-xs font-medium px-2.5 py-0.5 rounded-full bg-gradient-to-r text-white', themeInfo.gradient)}>
+                  <span className="text-xs font-medium px-2.5 py-0.5 rounded-full bg-accent text-accent-foreground">
                     {themeInfo.label}
                   </span>
                 </div>
@@ -269,8 +271,7 @@ export const MessageBubble = memo(function MessageBubble({
               href={localPptxUrl}
               download
               className={cn(
-                'inline-flex items-center gap-2 px-5 py-2.5 rounded-xl text-white text-sm font-semibold transition-all shadow-lg hover:shadow-xl hover:scale-[1.02] active:scale-[0.98] bg-gradient-to-r',
-                themeInfo ? themeInfo.gradient : 'from-blue-600 to-blue-500'
+                'inline-flex items-center gap-2 px-5 py-2.5 rounded-xl text-white text-sm font-semibold transition-all bg-primary text-primary-foreground hover:bg-primary/90'
               )}
             >
               <FileDown className="w-4 h-4" />
@@ -285,7 +286,7 @@ export const MessageBubble = memo(function MessageBubble({
                 <div className="flex flex-wrap gap-2">
                   {message.style_suggestions.map((s, i) => (
                     <span key={i} className="text-xs px-3 py-1.5 rounded-lg bg-background border border-border/60 text-muted-foreground hover:text-foreground hover:border-primary/40 transition-colors cursor-default">
-                      💡 {s}
+                      {s}
                     </span>
                   ))}
                 </div>
@@ -298,7 +299,7 @@ export const MessageBubble = memo(function MessageBubble({
         {!isStreaming && (
           <div className={cn(
             'flex items-center gap-1 mt-2 transition-opacity duration-150',
-            (copyError || showExportMenu || exportingFormat || exportMenuError) ? 'opacity-100' : 'opacity-0 group-hover/message:opacity-100'
+            (copyError || showExportMenu || exportingFormat || exportMenuError) ? 'opacity-100' : 'opacity-0 group-hover/message:opacity-100 focus-within:opacity-100'
           )}>
             <span className="text-[10px] text-muted-foreground mr-1">{formattedTime}</span>
             <button

@@ -1,3 +1,4 @@
+import { Brand } from '@/components/Brand';
 import { useLocation } from "react-router-dom";
 import { useEffect } from "react";
 
@@ -11,10 +12,11 @@ const NotFound = () => {
   return (
     <div className="flex min-h-[100dvh] items-center justify-center bg-background p-4">
       <div className="surface-card p-8 text-center max-w-md w-full">
+        <Brand className="mb-8" />
         <h1 className="mb-4 text-4xl font-bold text-primary">404</h1>
-        <p className="mb-4 text-xl text-muted-foreground">Oops! Page not found</p>
+        <p className="mb-4 text-xl text-muted-foreground">This page took a different direction.</p>
         <a href="/" className="text-primary underline hover:text-primary/90">
-          Return to Home
+          Back to your workspace
         </a>
       </div>
     </div>

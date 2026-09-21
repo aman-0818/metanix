@@ -1,3 +1,7 @@
+import { Brand } from '@/components/Brand';
+import { KnowledgeManager } from '@/components/admin/KnowledgeManager';
+import { ProviderContextSettings } from '@/components/admin/ProviderContextSettings';
+import { ThemeToggle } from '@/components/ThemeToggle';
 import { useState, useEffect } from 'react';
 import { useAuthStore } from '@/hooks/useAuthStore';
 import { useFocusTrap } from '@/hooks/useFocusTrap';
@@ -356,7 +360,7 @@ export function AdminPanel({ isOpen = false, onClose, variant = 'modal', embedde
   const [availableLLMs, setAvailableLLMs] = useState<LLMProvider[]>([]);
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
-  const [activeTab, setActiveTab] = useState<'users' | 'models' | 'usage' | 'security' | 'logs'>(section ?? 'users');
+  const [activeTab, setActiveTab] = useState<'users' | 'models' | 'usage' | 'security' | 'logs' | 'knowledge'>(section ?? 'users');
   const [isLoadingUsers, setIsLoadingUsers] = useState(false);
 
   useEffect(() => {
@@ -390,6 +394,13 @@ export function AdminPanel({ isOpen = false, onClose, variant = 'modal', embedde
   const [searchQuery, setSearchQuery] = useState('');
   const [searchResults, setSearchResults] = useState<AdUser[]>([]);
   const [selectedAdUser, setSelectedAdUser] = useState<AdUser | null>(null);
+  const [userOnboardMode, setUserOnboardMode] = useState<'ad' | 'local'>('ad');
+  const [localUsername, setLocalUsername] = useState('');
+  const [localEmail, setLocalEmail] = useState('');
+  const [localPassword, setLocalPassword] = useState('');
+  const [localCreateRole, setLocalCreateRole] = useState<'admin' | 'user'>('user');
+  const [localCreateError, setLocalCreateError] = useState('');
+  const [isCreatingLocalUser, setIsCreatingLocalUser] = useState(false);
   const [newRole, setNewRole] = useState<'admin' | 'user'>('user');
   const [selectedLLMs, setSelectedLLMs] = useState<string[]>([]);
   const [newSessionQuotaDays, setNewSessionQuotaDays] = useState('');
@@ -679,6 +690,51 @@ export function AdminPanel({ isOpen = false, onClose, variant = 'modal', embedde
       setError(err.message || 'Failed to delete user');
     }
     setIsDeletingUser(null);
+  };
+
+  const handleCreateLocalUser = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setError('');
+    setSuccess('');
+    setLocalCreateError('');
+
+    const username = localUsername.trim();
+    const email = localEmail.trim();
+    const password = localPassword.trim();
+
+    if (!username) {
+      setLocalCreateError('Username is required');
+      return;
+    }
+    if (!email || !email.includes('@')) {
+      setLocalCreateError('A valid email is required');
+      return;
+    }
+    if (!password || password.length < 6) {
+      setLocalCreateError('Password must be at least 6 characters');
+      return;
+    }
+
+    setIsCreatingLocalUser(true);
+    try {
+      await apiService.createLocalUser({
+        username,
+        email,
+        password,
+        role: localCreateRole,
+      });
+      setSuccess('Local account created');
+      setUserOnboardMode('ad');
+      setLocalUsername('');
+      setLocalEmail('');
+      setLocalPassword('');
+      setLocalCreateRole('user');
+      setShowAddUser(false);
+      loadUsers();
+    } catch (err: any) {
+      setLocalCreateError(err.message || 'Failed to create local user');
+    }
+    setIsCreatingLocalUser(false);
   };
 
   // ----- Create LLM Provider -----
@@ -1052,9 +1108,11 @@ export function AdminPanel({ isOpen = false, onClose, variant = 'modal', embedde
   const adminAccounts = filteredUsers.filter(u => u.role === 'admin');
 
   if (!isVisible) return null;
-  
-  // ⚠️ Security: Only admins can access this panel
-  if (user?.role !== 'admin') {
+
+  // ⚠️ Security: Only admins can access this panel. Treat superuser/staff
+  // records as admins too, since the backend serializer can carry those
+  // flags from the stored Django auth model even when the role string is stale.
+  if (!(user?.role === 'admin' || user?.is_superuser || user?.is_staff)) {
     return null;
   }
 
@@ -1223,22 +1281,22 @@ export function AdminPanel({ isOpen = false, onClose, variant = 'modal', embedde
   // Render
   // =======================================================================
   const header = (
-    <div className="flex items-center justify-between px-4 sm:px-6 py-4 border-b border-border bg-card">
+    <div className="flex items-center justify-between px-4 sm:px-7 py-5 border-b border-border/70 bg-card">
       <div className="flex items-center gap-3 min-w-0">
-        <div className="w-9 h-9 rounded-md bg-primary/10 flex items-center justify-center shrink-0">
-          <Shield className="w-4.5 h-4.5 text-primary" style={{ width: '18px', height: '18px' }} />
-        </div>
+        <Brand />
+        <span className="h-6 w-px bg-border hidden sm:block" />
         <div className="min-w-0">
-          <h2 className="font-serif text-xl text-foreground">Admin Panel</h2>
-          <p className="text-xs text-muted-foreground hidden sm:block">Manage users, models &amp; settings</p>
+          <h2 className="text-sm font-medium text-foreground">Control center</h2>
+          <p className="text-xs text-muted-foreground hidden sm:block">Workspace administration</p>
         </div>
       </div>
 
       <div className="flex items-center gap-2">
+        <ThemeToggle />
         <span className="hidden sm:inline-flex items-center gap-1.5 text-xs px-2.5 py-1 rounded-full bg-muted text-muted-foreground font-medium">
           {users.length} users
         </span>
-        <button onClick={onClose}
+        <button onClick={onClose} aria-label="Back to workspace"
           className="w-8 h-8 rounded-md flex items-center justify-center hover:bg-muted text-muted-foreground hover:text-foreground transition-colors shrink-0">
           <X className="w-4 h-4" />
         </button>
@@ -1248,21 +1306,30 @@ export function AdminPanel({ isOpen = false, onClose, variant = 'modal', embedde
 
   const nav = (
     <nav
-      role="tablist"
-      aria-label="Admin sections"
-      className="w-full sm:w-56 shrink-0 border-b sm:border-b-0 sm:border-r border-border bg-muted/30 p-2 sm:p-3 flex flex-col overflow-x-auto sm:overflow-x-visible sm:overflow-y-auto scrollbar-mobile-hide"
+      aria-label="Administration"
+      className="w-full sm:w-60 shrink-0 border-b sm:border-b-0 sm:border-r border-border bg-sidebar p-2 sm:p-4 flex flex-col overflow-x-auto sm:overflow-x-visible sm:overflow-y-auto scrollbar-mobile-hide"
     >
       <p className="hidden sm:block px-2 pt-1 pb-3 text-xs font-semibold uppercase tracking-wider text-muted-foreground">Administration</p>
-      <div className="flex flex-row sm:flex-col gap-1 sm:gap-0.5">
+      <div role="tablist" aria-label="Admin sections" className="flex flex-row sm:flex-col gap-1 sm:gap-0.5" onKeyDown={event => {
+        if (!['ArrowDown', 'ArrowUp', 'ArrowRight', 'ArrowLeft', 'Home', 'End'].includes(event.key)) return;
+        const tabs = Array.from(event.currentTarget.querySelectorAll<HTMLButtonElement>('[role="tab"]'));
+        const current = tabs.indexOf(document.activeElement as HTMLButtonElement);
+        const next = event.key === 'Home' ? 0 : event.key === 'End' ? tabs.length - 1 : (current + (['ArrowDown', 'ArrowRight'].includes(event.key) ? 1 : -1) + tabs.length) % tabs.length;
+        event.preventDefault(); tabs[next]?.focus(); tabs[next]?.click();
+      }}>
         {([
           { id: 'users',  label: 'Users',  icon: Users,     color: 'text-primary' },
-          { id: 'models', label: 'Models', icon: Settings,  color: 'text-accent-foreground' },
-          { id: 'usage',  label: 'Usage Analytics',  icon: DollarSign,color: 'text-primary' },
-          { id: 'security', label: 'Security', icon: Lock, color: 'text-destructive' },
-          { id: 'logs',   label: 'Logs',    icon: FileText,  color: 'text-warning' },
+          { id: 'models', label: 'LLM providers', icon: Settings,  color: 'text-accent-foreground' },
+          { id: 'knowledge', label: 'Company knowledge', icon: FileText, color: 'text-primary' },
+          { id: 'usage',  label: 'Usage & costs',  icon: DollarSign,color: 'text-primary' },
+          { id: 'security', label: 'Security & audit', icon: Lock, color: 'text-destructive' },
+          { id: 'logs',   label: 'Activity logs',    icon: FileText,  color: 'text-warning' },
         ] as const).map(({ id, label, icon: Icon, color }) => (
           <button key={id}
             role="tab"
+            id={`admin-tab-${id}`}
+            aria-controls="admin-content"
+            tabIndex={activeTab === id ? 0 : -1}
             aria-selected={activeTab === id}
             onClick={() => { setActiveTab(id); setModelFilter(''); setUserFilter(''); }}
             className={cn(
@@ -1287,7 +1354,7 @@ export function AdminPanel({ isOpen = false, onClose, variant = 'modal', embedde
             className="w-full flex items-center gap-2.5 rounded-lg px-2.5 py-2 text-sm text-left text-foreground/80 hover:bg-muted transition-colors"
           >
             <ArrowLeft className="w-4 h-4 shrink-0" />
-            Back to Chat
+            Back to workspace
           </button>
         </div>
       )}
@@ -1307,6 +1374,7 @@ export function AdminPanel({ isOpen = false, onClose, variant = 'modal', embedde
       {/* ============================================================= */}
       {/* TAB: User Management (unified)                                 */}
           {/* ============================================================= */}
+          {activeTab === 'knowledge' && <KnowledgeManager />}
           {activeTab === 'users' && (
             <div className="space-y-6">
               {/* Section heading */}
@@ -1567,6 +1635,7 @@ export function AdminPanel({ isOpen = false, onClose, variant = 'modal', embedde
           {/* ============================================================= */}
           {activeTab === 'models' && (
             <div className="space-y-6">
+              <ProviderContextSettings providers={availableLLMs} />
               {/* Section heading */}
               <div className="flex items-center gap-2">
                 <Settings className="w-4 h-4 text-muted-foreground" />
@@ -1967,7 +2036,7 @@ export function AdminPanel({ isOpen = false, onClose, variant = 'modal', embedde
                           <Switch checked={provider.is_active} onChange={() => handleToggleLlm(provider.id, provider.is_active)}
                             title={provider.is_active ? 'Disable model' : 'Enable model'} />
                           <button
-                            onClick={() => { isEditing ? setEditingLlmId(null) : openLlmEditor(provider.id); }}
+                            onClick={() => isEditing ? setEditingLlmId(null) : openLlmEditor(provider.id)}
                             className={`p-1.5 rounded-lg border transition-colors ${
                               isEditing ? 'border-primary bg-primary/10 text-primary' : 'border-border hover:bg-muted'
                             }`}
@@ -2492,7 +2561,7 @@ export function AdminPanel({ isOpen = false, onClose, variant = 'modal', embedde
                           <Switch checked={provider.is_active} onChange={() => handleToggleImageProvider(provider.id, provider.is_active)}
                             title={provider.is_active ? 'Disable provider' : 'Enable provider'} />
                           <button
-                            onClick={() => { isEditing ? setIsEditingImageProvider(false) : openImageProviderEditor(provider); }}
+                            onClick={() => isEditing ? setIsEditingImageProvider(false) : openImageProviderEditor(provider)}
                             className={`p-1.5 rounded-lg border transition-colors ${
                               isEditing ? 'border-primary bg-primary/10 text-primary' : 'border-border hover:bg-muted'
                             }`}
@@ -2808,48 +2877,34 @@ export function AdminPanel({ isOpen = false, onClose, variant = 'modal', embedde
   );
 
   const onboardModal = showAddUser && (
-        <div className="fixed inset-0 z-50 flex items-start justify-center pt-6 px-3 pb-6 bg-black/40 animate-fade-in overflow-y-auto">
-          <div className="w-full max-w-xl bg-card border border-border rounded-2xl shadow-2xl overflow-hidden animate-scale-in">
-
-            {/* Modal header */}
-            <div className="flex items-center justify-between px-5 py-4 border-b border-border">
-              <div className="flex items-center gap-3">
-                <div className="w-9 h-9 rounded-md bg-primary/10 flex items-center justify-center">
-                  <UserPlus className="w-4 h-4 text-primary" />
-                </div>
-                <div>
-                  <h4 className="text-sm font-semibold">Onboard User</h4>
-                  <p className="text-xs text-muted-foreground">from Active Directory</p>
-                </div>
-              </div>
-              {/* Step progress */}
-              <div className="hidden sm:flex items-center gap-1.5 mr-3">
-                {[
-                  { n: 1, label: 'Search',    done: searchQuery.length >= 2 },
-                  { n: 2, label: 'Select',    done: !!selectedAdUser },
-                  { n: 3, label: 'Configure', done: false },
-                ].map(({ n, label, done }, i, arr) => (
-                  <div key={n} className="flex items-center gap-1">
-                    <div className={`flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold transition-all ${
-                      done ? 'bg-primary/15 text-primary' : 'bg-muted text-muted-foreground'
-                    }`}>
-                      {done ? <CheckCircle className="w-3 h-3" /> : <span className="w-3 h-3 rounded-full border border-current flex items-center justify-center text-[8px]">{n}</span>}
-                      {label}
-                    </div>
-                    {i < arr.length - 1 && <div className="w-3 h-px bg-border" />}
-                  </div>
-                ))}
-              </div>
-              <button
-                onClick={() => { setShowAddUser(false); setSearchQuery(''); setSearchResults([]); setSelectedAdUser(null); }}
-                className="p-1.5 rounded-md text-muted-foreground hover:text-foreground hover:bg-muted transition-colors">
-                <X className="w-4 h-4" />
-              </button>
+    <div className="fixed inset-0 z-50 flex items-start justify-center pt-6 px-3 pb-6 bg-black/40 animate-fade-in overflow-y-auto">
+      <div className="w-full max-w-xl bg-card border border-border rounded-2xl shadow-2xl overflow-hidden animate-scale-in">
+        <div className="flex items-center justify-between px-5 py-4 border-b border-border">
+          <div className="flex items-center gap-3">
+            <div className="w-9 h-9 rounded-md bg-primary/10 flex items-center justify-center">
+              <UserPlus className="w-4 h-4 text-primary" />
             </div>
+            <div>
+              <h4 className="text-sm font-semibold">Onboard User</h4>
+              <p className="text-xs text-muted-foreground">{userOnboardMode === 'ad' ? 'from Active Directory' : 'create local account'}</p>
+            </div>
+          </div>
+          <div className="hidden sm:flex items-center gap-1.5 mr-3">
+            <button type="button" onClick={() => setUserOnboardMode('ad')}
+              className={`px-2 py-1 rounded text-[10px] font-semibold border transition-colors ${userOnboardMode === 'ad' ? 'bg-primary text-primary-foreground border-primary' : 'bg-muted text-muted-foreground border-border hover:bg-muted/80'}`}>AD Search</button>
+            <button type="button" onClick={() => setUserOnboardMode('local')}
+              className={`px-2 py-1 rounded text-[10px] font-semibold border transition-colors ${userOnboardMode === 'local' ? 'bg-primary text-primary-foreground border-primary' : 'bg-muted text-muted-foreground border-border hover:bg-muted/80'}`}>Local</button>
+          </div>
+          <button
+            onClick={() => { setShowAddUser(false); setSearchQuery(''); setSearchResults([]); setSelectedAdUser(null); setUserOnboardMode('ad'); setLocalUsername(''); setLocalEmail(''); setLocalPassword(''); setLocalCreateRole('user'); setLocalCreateError(''); }}
+            className="p-1.5 rounded-md text-muted-foreground hover:text-foreground hover:bg-muted transition-colors">
+            <X className="w-4 h-4" />
+          </button>
+        </div>
 
-            <div className="p-5 space-y-5">
-
-              {/* Step 1 — Search */}
+        <div className="p-5 space-y-5">
+          {userOnboardMode === 'ad' ? (
+            <>
               <div className="space-y-3">
                 <div className="flex items-center gap-2">
                   <span className="w-5 h-5 rounded-full bg-primary text-primary-foreground text-[10px] font-bold flex items-center justify-center shrink-0">1</span>
@@ -2905,10 +2960,8 @@ export function AdminPanel({ isOpen = false, onClose, variant = 'modal', embedde
                 )}
               </div>
 
-              {/* Divider */}
               <div className="border-t border-border/50" />
 
-              {/* Step 2 — Selected */}
               <div className="space-y-2">
                 <div className="flex items-center gap-2">
                   <span className={`w-5 h-5 rounded-full text-[10px] font-bold flex items-center justify-center shrink-0 transition-colors ${selectedAdUser ? 'bg-primary text-white' : 'bg-muted text-muted-foreground'}`}>2</span>
@@ -2934,10 +2987,8 @@ export function AdminPanel({ isOpen = false, onClose, variant = 'modal', embedde
                 )}
               </div>
 
-              {/* Divider */}
               <div className="border-t border-border/50" />
 
-              {/* Step 3 — Configure */}
               <form onSubmit={handleAddUser} className="space-y-4">
                 <div className="flex items-center gap-2">
                   <span className="w-5 h-5 rounded-full bg-muted text-muted-foreground text-[10px] font-bold flex items-center justify-center shrink-0">3</span>
@@ -2945,7 +2996,6 @@ export function AdminPanel({ isOpen = false, onClose, variant = 'modal', embedde
                 </div>
 
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                  {/* Role */}
                   <div className="space-y-2">
                     <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Role</label>
                     <div className="flex gap-2">
@@ -2964,7 +3014,6 @@ export function AdminPanel({ isOpen = false, onClose, variant = 'modal', embedde
                       ))}
                     </div>
                   </div>
-                  {/* Cost Quota */}
                   <div className="space-y-2">
                     <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wide flex items-center gap-1">
                       <DollarSign className="w-3 h-3" /> Cost Quota (USD)
@@ -2975,16 +3024,15 @@ export function AdminPanel({ isOpen = false, onClose, variant = 'modal', embedde
                   </div>
                 </div>
 
-                {/* Session Quota */}
                 <div className="space-y-2">
                   <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wide flex items-center gap-1">
                     <Clock className="w-3 h-3" /> Session Quota
                   </label>
                   <div className="grid grid-cols-3 gap-2">
                     {[
-                      { value: newSessionQuotaDays,    set: setNewSessionQuotaDays,    unit: 'days' },
-                      { value: newSessionQuotaHours,   set: setNewSessionQuotaHours,   unit: 'hrs'  },
-                      { value: newSessionQuotaMinutes, set: setNewSessionQuotaMinutes, unit: 'min'  },
+                      { value: newSessionQuotaDays, set: setNewSessionQuotaDays, unit: 'days' },
+                      { value: newSessionQuotaHours, set: setNewSessionQuotaHours, unit: 'hrs' },
+                      { value: newSessionQuotaMinutes, set: setNewSessionQuotaMinutes, unit: 'min' },
                     ].map(({ value, set, unit }) => (
                       <div key={unit} className="relative">
                         <input type="number" min="0" value={value} onChange={e => set(e.target.value)}
@@ -2996,7 +3044,6 @@ export function AdminPanel({ isOpen = false, onClose, variant = 'modal', embedde
                   <p className="text-xs text-muted-foreground">Leave all blank for unlimited.</p>
                 </div>
 
-                {/* Model Access */}
                 {newRole === 'user' && (
                   <div className="space-y-2">
                     <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wide flex items-center gap-1">
@@ -3020,7 +3067,6 @@ export function AdminPanel({ isOpen = false, onClose, variant = 'modal', embedde
                   </div>
                 )}
 
-                {/* Document Converter */}
                 <div className="flex items-center justify-between p-3 rounded-md border border-border bg-muted/20">
                   <div className="flex items-center gap-3">
                     <div className="w-8 h-8 rounded-md bg-muted flex items-center justify-center shrink-0">
@@ -3034,7 +3080,6 @@ export function AdminPanel({ isOpen = false, onClose, variant = 'modal', embedde
                   <Switch checked={newDocConverter} onChange={() => setNewDocConverter(!newDocConverter)} />
                 </div>
 
-                {/* Submit row */}
                 <div className="flex items-center gap-2.5 pt-1">
                   <button type="submit" disabled={isAdding || !selectedAdUser}
                     className="flex-1 flex items-center justify-center gap-2 px-4 py-2.5 rounded-md font-semibold text-sm bg-primary text-primary-foreground hover:opacity-90 disabled:opacity-50 transition-opacity">
@@ -3052,11 +3097,54 @@ export function AdminPanel({ isOpen = false, onClose, variant = 'modal', embedde
                   </button>
                 </div>
               </form>
-
-            </div>
-          </div>
+            </>
+          ) : (
+            <form onSubmit={handleCreateLocalUser} className="space-y-4">
+              <div className="space-y-2">
+                <div className="flex items-center gap-2">
+                  <span className="w-5 h-5 rounded-full bg-primary text-primary-foreground text-[10px] font-bold flex items-center justify-center shrink-0">1</span>
+                  <p className="text-sm font-semibold">Create Local Account</p>
+                </div>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  <div className="space-y-2">
+                    <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Username</label>
+                    <input value={localUsername} onChange={e => setLocalUsername(e.target.value)} className="w-full px-3 py-2.5 rounded-md border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-ring" placeholder="local.username" />
+                  </div>
+                  <div className="space-y-2">
+                    <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Email</label>
+                    <input type="email" value={localEmail} onChange={e => setLocalEmail(e.target.value)} className="w-full px-3 py-2.5 rounded-md border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-ring" placeholder="name@example.com" />
+                  </div>
+                </div>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  <div className="space-y-2">
+                    <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Password</label>
+                    <input type="password" value={localPassword} onChange={e => setLocalPassword(e.target.value)} className="w-full px-3 py-2.5 rounded-md border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-ring" placeholder="minimum 6 characters" />
+                  </div>
+                  <div className="space-y-2">
+                    <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Role</label>
+                    <div className="flex gap-2">
+                      {(['user', 'admin'] as const).map(r => (
+                        <button key={r} type="button" onClick={() => setLocalCreateRole(r)}
+                          className={`flex-1 flex items-center justify-center gap-1.5 py-2.5 rounded-md text-sm font-semibold border transition-colors ${localCreateRole === r ? 'bg-primary/10 border-primary/40 text-primary' : 'border-border hover:bg-muted'}`}>{r === 'admin' ? 'Admin' : 'User'}</button>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+                {localCreateError && <p className="text-xs text-destructive">{localCreateError}</p>}
+              </div>
+              <div className="flex items-center gap-2.5 pt-1">
+                <button type="submit" disabled={isCreatingLocalUser}
+                  className="flex-1 flex items-center justify-center gap-2 px-4 py-2.5 rounded-md font-semibold text-sm bg-primary text-primary-foreground hover:opacity-90 disabled:opacity-50 transition-opacity">
+                  {isCreatingLocalUser ? <><RefreshCw className="w-3.5 h-3.5 animate-spin" /> Creating…</> : <><UserPlus className="w-3.5 h-3.5" /> Create Local Account</>}
+                </button>
+                <button type="button" onClick={() => { setUserOnboardMode('ad'); setLocalUsername(''); setLocalEmail(''); setLocalPassword(''); setLocalCreateRole('user'); setLocalCreateError(''); }} className="px-4 py-2.5 rounded-xl border text-sm font-medium hover:bg-muted transition-colors">Back to AD Search</button>
+              </div>
+            </form>
+          )}
         </div>
-      );
+      </div>
+    </div>
+  );
 
   if (embedded) {
     return (
@@ -3071,7 +3159,7 @@ export function AdminPanel({ isOpen = false, onClose, variant = 'modal', embedde
   }
 
   return (
-    <div className={isModal ? 'fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-2 sm:p-4' : 'min-h-[100dvh] w-full bg-background'}>
+    <div className={isModal ? 'admin-workspace fixed inset-0 bg-black/40 backdrop-blur-sm z-50 flex items-center justify-center p-2 sm:p-4' : 'admin-workspace min-h-[100dvh] w-full bg-background'}>
       <div
         ref={isModal ? modalRef : undefined}
         role={isModal ? 'dialog' : undefined}
@@ -3083,8 +3171,9 @@ export function AdminPanel({ isOpen = false, onClose, variant = 'modal', embedde
         {header}
         <div className={cn('flex flex-col sm:flex-row', contentClassName)}>
           {nav}
-          <div className="flex-1 min-w-0 overflow-y-auto px-4 py-4 sm:px-6 sm:py-6">
+          <div id="admin-content" role="tabpanel" aria-labelledby={`admin-tab-${activeTab}`} className="flex-1 min-w-0 overflow-y-auto px-4 py-6 sm:px-8 sm:py-8">
             <div className="max-w-6xl mx-auto">
+              <div className="page-intro mb-8"><span className="eyebrow">METANIX / ADMINISTRATION</span><h1>{{users: 'People & permissions', knowledge: 'Company knowledge', models: 'Intelligence, configured.', usage: 'Every interaction, in view.', security: 'A workspace you can trust.', logs: 'The full picture.'}[activeTab]}</h1><p>{{users: 'Manage access, individual quotas, and the tools your team can use.', knowledge: 'Upload policies, manage access, and track document indexing.', models: 'Connect and manage the models that power your workspace.', usage: 'Understand adoption, token usage, and costs from your workspace activity.', security: 'Review authentication activity and API key protection.', logs: 'Explore requests, events, and the details behind them.'}[activeTab]}</p></div>
               {tabContent}
             </div>
           </div>
@@ -3105,7 +3194,7 @@ function Field({ label, value, onChange, placeholder, type = 'text' }: {
   return (
     <div className="space-y-2">
       <label className="text-sm font-medium">{label}</label>
-      <input type={type} value={value} onChange={e => onChange(e.target.value)} placeholder={placeholder}
+      <input aria-label={label} type={type} value={value} onChange={e => onChange(e.target.value)} placeholder={placeholder}
         className="w-full px-3 py-2 rounded-md border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-ring" />
     </div>
   );
@@ -3119,6 +3208,7 @@ function Switch({ checked, onChange, title }: { checked: boolean; onChange: () =
       aria-checked={checked}
       onClick={onChange}
       title={title}
+      aria-label={title || 'Toggle setting'}
       className={`relative inline-flex h-5 w-9 shrink-0 items-center rounded-full transition-colors duration-150 ${checked ? 'bg-primary' : 'bg-muted border border-border'}`}
     >
       <span className={`inline-block h-3.5 w-3.5 transform rounded-full bg-card shadow-sm transition-transform duration-150 ${checked ? 'translate-x-[18px]' : 'translate-x-0.5'}`} />
@@ -3129,7 +3219,7 @@ function Switch({ checked, onChange, title }: { checked: boolean; onChange: () =
 function Toggle({ label, checked, onChange }: { label: string; checked: boolean; onChange: (v: boolean) => void }) {
   return (
     <div className="flex items-center gap-2 text-sm">
-      <Switch checked={checked} onChange={() => onChange(!checked)} />
+      <Switch checked={checked} onChange={() => onChange(!checked)} title={label} />
       <span className="cursor-pointer" onClick={() => onChange(!checked)}>{label}</span>
     </div>
   );

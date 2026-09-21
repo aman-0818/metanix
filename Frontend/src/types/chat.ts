@@ -1,5 +1,5 @@
 export type MessageRole = 'system' | 'user' | 'assistant';
-export type ChatMode = 'general' | 'code' | 'summarize' | 'document' | 'presentation';
+export type ChatMode = 'general' | 'code' | 'summarize' | 'document' | 'knowledge' | 'presentation';
 export type StreamingStatus = 'idle' | 'waiting' | 'streaming' | 'complete';
 
 export type ProviderType =
@@ -211,6 +211,7 @@ export interface ConversionJob {
 }
 
 export interface ConverterFormats {
+  max_upload_size_mb?: number;
   input_formats: Record<string, string>;
   output_formats: {
     documents: Record<string, string>;

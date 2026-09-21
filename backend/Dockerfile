@@ -6,6 +6,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libpq-dev \
     libssl-dev \
     libffi-dev \
+    libreoffice-writer \
+    libreoffice-calc \
+    ocrmypdf \
+    tesseract-ocr \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
@@ -18,7 +22,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY . .
 
 # Collect static files at build time so the image is self-contained
-RUN python manage.py collectstatic --noinput --settings=multimodel.settings || true
+RUN python -c "import os, secrets; os.environ['SECRET_KEY'] = secrets.token_urlsafe(48); os.environ['DJANGO_SETTINGS_MODULE'] = 'multimodel.settings'; import django; django.setup(); from django.core.management import call_command; call_command('collectstatic', interactive=False)"
 
 # Create a non-root user; Django should never run as root in production
 RUN useradd -m -u 1000 appuser && chown -R appuser:appuser /app

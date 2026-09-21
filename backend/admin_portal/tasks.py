@@ -31,6 +31,12 @@ from celery import shared_task
 logger = logging.getLogger(__name__)
 
 
+@shared_task(name='admin_portal.tasks.ingest_knowledge_task')
+def ingest_knowledge_task(document_id, version):
+    from .services.rag import ingest
+    ingest(document_id, version)
+
+
 # ===========================================================================
 #  Chat post-processing ("chat_post" queue)
 # ===========================================================================
@@ -58,7 +64,7 @@ def summarize_conversation_task(conversation_id, provider_id):
 def chat_stream_post_process_task(conversation_id, provider_id, user_id,
                                    ai_content, final_result, permission_id,
                                    message_text, export_format=None,
-                                   export_source_content=None, is_export_ack=False):
+                                   export_source_content=None, is_export_ack=False, message_id=None):
     """Background half of ChatStreamView: persist the assistant message,
     record quota usage, log usage, auto-title, and auto-summarize — all the
     work that used to run in an unmanaged thread after the SSE 'done' event.
@@ -88,7 +94,7 @@ def chat_stream_post_process_task(conversation_id, provider_id, user_id,
 
     view = ChatView()
     try:
-        ai_msg = Message.objects.create(
+        ai_msg = Message.objects.get(pk=message_id, conversation=conversation) if message_id else Message.objects.create(
             conversation=conversation,
             role='assistant',
             content=ai_content,
@@ -98,16 +104,9 @@ def chat_stream_post_process_task(conversation_id, provider_id, user_id,
             export_file_type=export_format or '',
             is_export_ack=is_export_ack,
         )
-        # Set the title before export generation (not after) so a brand-new
-        # conversation's first export is named "IAM_Process_ab12.docx"
-        # instead of the generic "Response_ab12.docx" — title generation is
-        # a cheap string operation (no LLM call), so this ordering costs
-        # nothing. Only runs when the LLM actually produced this turn; a
-        # pure export (final_result is None) reused prior content and the
-        # conversation already has whatever title its original turn set.
-        if final_result and conversation.title in ('New Chat', '') and conversation.messages.count() <= 2:
-            conversation.title = view._generate_title(message_text)
-            conversation.save(update_fields=['title'])
+        # Also repair old unnamed conversations; no message-count or usage gate.
+        from .conversation_titles import ensure_title
+        ensure_title(conversation)
 
         if export_format:
             # Name the file after the conversation when it has a real title —
@@ -199,7 +198,7 @@ def generate_pptx_task(message_id, slides, title, theme):
 def convert_document_task(job_id):
     """Runs the (potentially slow — OCR, PyMuPDF, LibreOffice, etc.)
     document conversion and updates the ConversionJob the client polls."""
-    from django.core.files.base import ContentFile
+    from django.core.files import File
     from django.utils import timezone
     from .models import ConversionJob
     from .services.document_converter import convert_document, cleanup_temp_file
@@ -210,32 +209,56 @@ def convert_document_task(job_id):
         logger.error("convert_document_task: ConversionJob %s not found", job_id)
         return
 
+    if not ConversionJob.objects.filter(pk=job.pk, status='pending').update(status='processing'):
+        return  # Duplicate delivery must not repeat a completed or running job.
     job.status = 'processing'
-    job.save(update_fields=['status'])
 
     try:
         input_path = job.input_file.path
-        success, output_path, message = convert_document(input_path, job.target_format, job.quality)
+        job.progress, job.progress_stage = 10, 'Processing file'
+        job.save(update_fields=['progress', 'progress_stage'])
+        if job.operation != 'convert':
+            from .services.pdf_operations import operate
+            from .encryption import decrypt_api_key
+            options = dict(job.options)
+            for key in ('input_password', 'output_password'):
+                if options.get(key): options[key] = decrypt_api_key(options[key])
+            paths = [input_path] + [item.file.path for item in job.additional_inputs.all()]
+            output_path = operate(paths, job.operation, options,
+                lambda value, stage: ConversionJob.objects.filter(pk=job.pk).update(progress=value, progress_stage=stage))
+            success, message = True, ''
+        else:
+            success, output_path, message = convert_document(input_path, job.target_format, job.quality)
 
         if success and output_path:
+            output_size = os.path.getsize(output_path)
+            if output_size > 100 * 1024 * 1024:
+                raise ValueError('Output exceeds 100 MB. Split the input or choose a lower quality.')
+            actual_format = os.path.splitext(output_path)[1].lstrip('.')
+            output_filename = f"{os.path.splitext(job.original_filename)[0]}.{actual_format}"
             with open(output_path, 'rb') as f:
-                output_content = f.read()
-            output_filename = f"{os.path.splitext(job.original_filename)[0]}.{job.target_format}"
-            job.output_file.save(output_filename, ContentFile(output_content))
-            job.output_file_size = len(output_content)
+                job.output_file.save(output_filename, File(f), save=False)
+            job.output_file_size = output_size
+            job.target_format = actual_format
             job.status = 'completed'
+            job.progress, job.progress_stage, job.options = 100, 'Completed', {}
             job.completed_at = timezone.now()
             job.save()
             cleanup_temp_file(output_path)
         else:
             job.status = 'failed'
+            job.progress_stage, job.options = 'Failed', {}
             job.error_message = message
             job.save()
     except Exception as e:
         logger.exception("Document conversion failed for job %s", job_id)
         job.status = 'failed'
+        job.progress_stage, job.options = 'Failed', {}
         job.error_message = str(e)[:2000]
         job.save()
+    finally:
+        if 'output_path' in locals() and output_path:
+            cleanup_temp_file(output_path)
 
 
 @shared_task(name='admin_portal.tasks.extract_text_task')
@@ -256,9 +279,14 @@ def extract_text_task(document_id):
 
     try:
         text = extract_text(doc.file.path, doc.file_type)
+        if not text.strip():
+            raise ValueError('No readable text found. For scanned PDFs, run OCR and upload the searchable result.')
         doc.extracted_text = text
         doc.extraction_status = 'completed'
-        doc.save(update_fields=['extracted_text', 'extraction_status'])
+        doc.extraction_error = ''
+        doc.save(update_fields=['extracted_text', 'extraction_status', 'extraction_error'])
+        from django.core.cache import cache
+        cache.delete(f'document-text:{doc.user_id}:{doc.pk}')
     except Exception as e:
         logger.exception("Text extraction failed for document %s", document_id)
         doc.extraction_status = 'failed'

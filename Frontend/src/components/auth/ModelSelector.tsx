@@ -1,3 +1,5 @@
+import { Brand } from '@/components/Brand';
+import { ThemeToggle } from '@/components/ThemeToggle';
 import { useState, useEffect } from 'react';
 import { useAuthStore } from '@/hooks/useAuthStore';
 import { apiService } from '@/lib/api';
@@ -15,7 +17,6 @@ import {
   Clock,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
-import { getProviderVisual } from '@/lib/providerVisuals';
 import type { LLMProvider } from '@/types/chat';
 
 // ---------------------------------------------------------------------------
@@ -91,8 +92,8 @@ export function ModelSelector() {
         setError(null);
 
         // Auto-select default or first model
-        if (!selectedModel && data.length > 0) {
-          const def = data.find((p) => p.is_default && p.is_active) || data[0];
+        if (!selectedModel && data.some(p => p.is_active)) {
+          const def = data.find((p) => p.is_default && p.is_active) || data.find(p => p.is_active);
           setSelectedModel(def.name, def.id);
         }
       } catch (err) {
@@ -105,8 +106,9 @@ export function ModelSelector() {
   }, []);
 
   return (
-    <div className="min-h-[100dvh] bg-gradient-to-br from-background via-background to-accent/30 p-3 sm:p-4 md:p-8">
+    <div className="min-h-[100dvh] bg-background p-3 sm:p-4 md:p-8">
       <div className="max-w-4xl mx-auto">
+        <div className="flex items-center justify-between mb-12"><Brand /><ThemeToggle /></div>
         {/* Header */}
         <div className="flex items-center justify-between mb-6 sm:mb-8">
           <div>
@@ -124,9 +126,9 @@ export function ModelSelector() {
 
         {/* Title */}
         <div className="text-center mb-6 sm:mb-10">
-          <h2 className="text-2xl sm:text-3xl font-bold mb-2">Choose Your AI Model</h2>
+          <h2 className="text-2xl sm:text-3xl font-bold mb-2">Choose your thinking partner.</h2>
           <p className="text-sm sm:text-base text-muted-foreground">
-            Select the AI model that best fits your needs
+            The models available in your workspace, ready for your next idea.
           </p>
         </div>
 
@@ -155,17 +157,16 @@ export function ModelSelector() {
             {providers.map((provider) => {
               const Icon = resolveIcon(provider.icon_name);
               const isSelected = selectedModel === provider.name;
-              const gradient = getProviderVisual(provider.provider_type).gradient;
 
               return (
                 <button
                   key={provider.id}
                   onClick={() => setSelectedModel(provider.name, provider.id)}
                   className={cn(
-                    'relative text-left p-5 rounded-xl border-2 transition-all duration-200',
-                    'hover:shadow-lg hover:scale-[1.02]',
+                    'relative text-left p-5 rounded-2xl border transition-all duration-200',
+                    'hover:border-primary/40 hover:-translate-y-0.5',
                     isSelected
-                      ? 'border-primary bg-primary/5 shadow-md'
+                      ? 'border-primary bg-primary/5'
                       : 'border-border bg-card hover:border-muted-foreground/30'
                   )}
                 >
@@ -177,11 +178,10 @@ export function ModelSelector() {
 
                   <div
                     className={cn(
-                      'w-10 h-10 sm:w-12 sm:h-12 rounded-xl flex items-center justify-center mb-3 sm:mb-4 bg-gradient-to-br',
-                      gradient
+                      'w-10 h-10 sm:w-12 sm:h-12 rounded-xl flex items-center justify-center mb-3 sm:mb-4 bg-accent'
                     )}
                   >
-                    <Icon className="w-5 h-5 sm:w-6 sm:h-6 text-white" />
+                    <Icon className="w-5 h-5 sm:w-6 sm:h-6 text-primary" />
                   </div>
 
                   <div className="pr-8">

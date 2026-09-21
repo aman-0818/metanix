@@ -113,6 +113,8 @@ export function ChatWindow({ chatId, onConversationsUpdated }: ChatWindowProps) 
 
   const [hasSummary, setHasSummary] = useState(false);
   const [stillWorking, setStillWorking] = useState(false);
+  const [searchActivity, setSearchActivity] = useState('');
+  useEffect(() => { if (streamingStatus === 'idle') setSearchActivity(''); }, [streamingStatus]);
   const [lastFailedMessage, setLastFailedMessage] = useState<string | null>(null);
   const stillWorkingTimeoutRef = useRef<number | null>(null);
 
@@ -429,9 +431,15 @@ export function ChatWindow({ chatId, onConversationsUpdated }: ChatWindowProps) 
               }
               appendStreamingContent(token);
             },
+            onSearch: (searching, error) => {
+              if (!isStale()) setSearchActivity(searching ? 'Searching the web…' : error || 'Web sources found');
+            },
             onDone: async (data) => {
               clearStreamTimeout();
               if (isStale()) return;
+              if (data.title) {
+                useChatStore.getState().updateChatTitle(data.conversation_id.toString(), data.title);
+              }
               const finalContent = useChatStore.getState().streamingContent;
               const aiMessageId = `ai-${Date.now()}`;
               addMessage({
@@ -551,7 +559,7 @@ export function ChatWindow({ chatId, onConversationsUpdated }: ChatWindowProps) 
           onSend={handleSendMessage}
           onStop={handleStop}
           showStop={isInputDisabled}
-          isWaiting={streamingStatus === 'waiting'}
+          isWaiting={showThinking}
         />
       </div>
     );
@@ -565,7 +573,7 @@ export function ChatWindow({ chatId, onConversationsUpdated }: ChatWindowProps) 
         onScroll={handleScroll}
         className="flex-1 overflow-y-auto scrollbar-thin"
       >
-        <div className="max-w-[1040px] mx-auto px-7 pt-3 pb-5 flex flex-col gap-[22px]">
+        <div className="max-w-[850px] mx-auto px-4 sm:px-7 pt-6 pb-5 flex flex-col gap-7">
           {hasSummary && (
             <p className="text-xs text-muted-foreground text-center -mb-2">
               Earlier messages in this conversation were condensed to save space — full history is still saved.
@@ -576,6 +584,7 @@ export function ChatWindow({ chatId, onConversationsUpdated }: ChatWindowProps) 
           ))}
 
           {showThinking && <ThinkingIndicator stillWorking={stillWorking} />}
+          {searchActivity && <p role="status" className="text-sm text-muted-foreground">{searchActivity}</p>}
 
           {showStreaming && (
             <MessageBubble
@@ -606,7 +615,7 @@ export function ChatWindow({ chatId, onConversationsUpdated }: ChatWindowProps) 
       )}
 
       {lastFailedMessage && !isInputDisabled && (
-        <div className="max-w-[1040px] w-full mx-auto px-7 pb-2 flex items-center justify-center gap-3 text-sm">
+        <div className="max-w-[850px] w-full mx-auto px-7 pb-2 flex items-center justify-center gap-3 text-sm">
           <span className="text-destructive">Message failed to send.</span>
           <button
             onClick={() => { const msg = lastFailedMessage; setLastFailedMessage(null); handleSendMessage(msg); }}
@@ -623,8 +632,8 @@ export function ChatWindow({ chatId, onConversationsUpdated }: ChatWindowProps) 
         onStop={handleStop}
         showStop={isInputDisabled}
         disabled={false}
-        isWaiting={streamingStatus === 'waiting'}
-        placeholder="Reply to Aionos AI..."
+        isWaiting={showThinking}
+        placeholder="Continue the conversation…"
       />
     </div>
   );

@@ -93,10 +93,10 @@ export function DocumentUpload({ className, hideChips = false }: DocumentUploadP
           title={uploading ? 'Cancel upload' : 'Attach a document'}
           aria-label={uploading ? 'Cancel upload' : 'Attach a document'}
           className={cn(
-            'flex items-center gap-1.5 px-3 py-1.5 rounded-full text-[12.5px] font-medium border transition-all shrink-0',
+            'flex items-center gap-1.5 px-2 sm:px-3 py-2 rounded-lg text-[12px] font-medium border transition-all shrink-0',
             uploading
               ? 'bg-destructive/10 text-destructive border-destructive/30'
-              : 'bg-transparent text-muted-foreground border-border/60 hover:border-border hover:text-foreground hover:bg-muted/40'
+              : 'bg-transparent text-muted-foreground border-transparent hover:border-border hover:text-foreground hover:bg-muted/40'
           )}
         >
           {uploading ? (
@@ -104,9 +104,9 @@ export function DocumentUpload({ className, hideChips = false }: DocumentUploadP
           ) : (
             <Paperclip className="w-3.5 h-3.5 shrink-0" />
           )}
-          Upload
+          <span className="sr-only sm:not-sr-only">Attach</span>
         </button>
-        {error && <span className="text-xs text-destructive">{error}</span>}
+        {error && <span role="alert" className="text-xs text-destructive">{error}</span>}
       </div>
 
       <input
@@ -133,8 +133,8 @@ export function DocumentChip({
   return (
     <div
       className={cn(
-        'flex items-center gap-2 px-2.5 py-[5px] rounded-lg text-[12.5px] w-fit',
-        isFailed ? 'bg-destructive/10 text-destructive' : 'bg-secondary text-[#5C5546]'
+        'flex items-center gap-2 px-3 py-2 border border-border/60 rounded-xl text-[12px] w-fit',
+        isFailed ? 'bg-destructive/10 text-destructive' : 'bg-secondary text-secondary-foreground'
       )}
       title={isFailed ? doc.extraction_error || 'Could not read this file' : undefined}
     >

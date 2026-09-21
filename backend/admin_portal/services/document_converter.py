@@ -137,10 +137,20 @@ def get_file_category(extension: str) -> str:
 
 def get_available_outputs(input_extension: str) -> dict:
     """Get available output formats for a given input format."""
-    category = get_file_category(input_extension)
-    if category in OUTPUT_FORMATS:
-        return OUTPUT_FORMATS[category]
-    return {}
+    ext = input_extension.lower().lstrip('.')
+    matrix = {
+        'pdf': ['pdf', 'docx', 'txt', 'html', 'md', 'png', 'jpg'],
+        'docx': ['docx', 'pdf', 'txt', 'html', 'md'],
+        'txt': ['txt', 'pdf', 'html', 'md', 'docx'],
+        'md': ['md', 'pdf', 'html', 'txt', 'docx'],
+        'html': ['html', 'md', 'txt'], 'htm': ['html', 'md', 'txt'],
+        'xlsx': ['xlsx', 'csv', 'pdf'], 'xls': ['csv', 'pdf'],
+        'csv': ['csv', 'xlsx', 'pdf'],
+    }
+    image_formats = ['png', 'jpg', 'jpeg', 'gif', 'bmp', 'tiff', 'tif', 'webp']
+    outputs = image_formats + ['pdf'] if ext in image_formats else matrix.get(ext, [])
+    labels = {key: value for group in OUTPUT_FORMATS.values() for key, value in group.items()}
+    return {key: labels.get(key, key.upper()) for key in outputs}
 
 
 # ---------------------------------------------------------------------------
@@ -1338,6 +1348,18 @@ def convert_document(
     output_dir = tempfile.mkdtemp(prefix='doc_convert_')
     success = False
     try:
+        if input_ext in ('png', 'jpg', 'jpeg', 'gif', 'bmp', 'tiff', 'tif', 'webp'):
+            from PIL import Image
+            with Image.open(input_path) as image:
+                if image.width * image.height > 40000000:
+                    raise ValueError('Image exceeds 40 million pixels. Resize it before converting.')
+        if input_ext == 'pdf':
+            import fitz
+            with fitz.open(input_path) as pdf:
+                if pdf.needs_pass:
+                    raise ValueError('Password-protected PDF. Use Remove password first, then convert it.')
+                if len(pdf) > 300:
+                    raise ValueError('PDF exceeds 300 pages. Split it before converting.')
         success, output_path, message = _dispatch_conversion(
             input_path, input_ext, output_ext, output_dir, quality
         )
@@ -1359,6 +1381,26 @@ def _dispatch_conversion(input_path, input_ext, output_ext, output_dir, quality)
     """Format-pair dispatch used by convert_document(). Split out so the
     try/finally cleanup in convert_document() wraps every return path
     uniformly (see fix for temp-dir leak on controlled failure paths)."""
+    if output_ext == 'pdf' and input_ext in ('docx', 'xlsx'):
+        from .pdf_operations import office_to_pdf
+        output = office_to_pdf(input_path, output_dir)
+        if output:
+            return True, output, 'Office to PDF conversion completed'
+    if input_ext in ('txt', 'md') and output_ext == 'docx':
+        from docx import Document
+        doc = Document()
+        with open(input_path, encoding='utf-8', errors='replace') as source:
+            for line in source: doc.add_paragraph(line.rstrip())
+        output = os.path.join(output_dir, Path(input_path).stem + '.docx')
+        doc.save(output)
+        return True, output, 'Text to Word completed'
+    if input_ext == 'md' and output_ext == 'txt':
+        output = os.path.join(output_dir, Path(input_path).stem + '.txt')
+        shutil.copy2(input_path, output)
+        return True, output, 'Markdown source exported as text'
+    if input_ext == 'csv' and output_ext == 'pdf':
+        success, xlsx_path, message = convert_csv_to_xlsx(input_path, output_dir)
+        return convert_xlsx_to_pdf(xlsx_path, output_dir) if success else (False, None, message)
     # Same format - just copy
     if input_ext == output_ext:
         input_basename = Path(input_path).stem
@@ -1470,12 +1512,14 @@ def cleanup_temp_file(file_path: str):
     """Clean up a temporary file and its parent directory if empty."""
     try:
         if file_path and os.path.exists(file_path):
-            parent_dir = os.path.dirname(file_path)
-            os.remove(file_path)
-            if parent_dir.startswith(tempfile.gettempdir()):
-                try:
-                    os.rmdir(parent_dir)
-                except OSError:
-                    pass
+            parent_dir = os.path.abspath(os.path.dirname(file_path))
+            temp_root = os.path.abspath(tempfile.gettempdir())
+            # Remove intermediate files only inside directories created by these
+            # services. Never recursively remove a caller-supplied parent folder.
+            if (os.path.dirname(parent_dir) == temp_root and
+                    os.path.basename(parent_dir).startswith(('doc_convert_', 'metanix_pdf_'))):
+                shutil.rmtree(parent_dir)
+            else:
+                os.remove(file_path)
     except Exception as e:
         logger.warning(f"Failed to cleanup temp file {file_path}: {e}")

@@ -11,7 +11,7 @@ from decimal import Decimal, InvalidOperation
 
 from django.conf import settings
 from django.core.cache import cache
-from django.db import transaction
+from django.db import transaction, close_old_connections
 from django.db.models import Sum, Count, Q, F, Max
 from django.http import StreamingHttpResponse
 from django.utils import timezone
@@ -43,10 +43,12 @@ from .serializers import (
     ProjectSerializer, SavedPromptSerializer,
 )
 from .llm_engine import call_llm, stream_llm, get_system_prompt
+from .conversation_titles import ensure_title
 from .skills import detect_intent, detect_export_format, is_pure_export_request, UNSPECIFIED_FORMAT
 from .llm_queue import llm_request_queue
 from .services.pptx_generator import generate_pptx, parse_llm_slides, extract_presentation_metadata
 from .services.file_export import generate_export
+from .services.chat_metrics import timed
 from .services.document_converter import (
     INPUT_FORMATS, OUTPUT_FORMATS, QUALITY_PRESETS,
     get_file_category, get_available_outputs,
@@ -57,6 +59,79 @@ from .tasks import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+@api_view(['POST'])
+@permission_classes([permissions.IsAuthenticated])
+def admin_create_local_user(request):
+    """Create a local username/password user from the admin panel.
+
+    This endpoint complements the AD sync flow and serves the
+    `createLocalUser()` frontend wrapper already present in the client.
+    """
+    if not request.user.is_admin():
+        return Response({'error': 'Access denied'}, status=403)
+
+    from accounts.models import User
+
+    username = (request.data.get('username') or '').strip()
+    email = (request.data.get('email') or '').strip()
+    password = request.data.get('password') or ''
+    role = (request.data.get('role') or 'user').strip()
+
+    if role not in {'admin', 'user'}:
+        return Response({'error': 'role must be admin or user'}, status=400)
+
+    if not username:
+        return Response({'error': 'username is required'}, status=400)
+    if not email:
+        return Response({'error': 'email is required'}, status=400)
+    if not password:
+        return Response({'error': 'password is required'}, status=400)
+    if len(password) < 6:
+        return Response({'error': 'password must be at least 6 characters'}, status=400)
+
+    if User.objects.filter(username__iexact=username).exists():
+        return Response({'error': 'username already exists'}, status=409)
+    if User.objects.filter(email__iexact=email).exists():
+        return Response({'error': 'email already exists'}, status=409)
+
+    user = User.objects.create_user(
+        username=username,
+        email=email,
+        password=password,
+        role=role,
+        is_active=True,
+    )
+
+    # Keep local admins visible in the Django staff UI without giving them
+    # every superuser capability by default.
+    if role == 'admin':
+        user.is_staff = True
+        user.save(update_fields=['is_staff'])
+
+    log_audit_event(
+        action='user_created',
+        performed_by=request.user,
+        action_target=user.username,
+        description=f"Created local {role} user {user.username}",
+        request=request,
+    )
+
+    return Response({
+        'message': 'Local user created successfully',
+        'user': {
+            'id': user.id,
+            'username': user.username,
+            'email': user.email,
+            'role': user.role,
+            'ad_id': user.ad_id,
+            'is_active': user.is_active,
+            'date_joined': user.date_joined.isoformat(),
+            'llm_permissions': [],
+            'has_document_converter': user.has_document_converter,
+        },
+    }, status=201)
 
 # FIX (ThreadPoolExecutor / bare threads removed):
 # _presentation_executor = ThreadPoolExecutor(max_workers=5) — REMOVED.
@@ -1463,6 +1538,9 @@ class ChatView(APIView):
 
         # --- Build messages for LLM ---
         document_context = self._get_document_context(document_ids, user)
+        if chat_mode == 'knowledge':
+            from .services.rag import knowledge_context
+            document_context, knowledge_sources = knowledge_context(user, message_text)
         effective_mode = chat_mode
         if chat_mode == 'general':
             detected = detect_intent(message_text)
@@ -1473,7 +1551,11 @@ class ChatView(APIView):
             system_prompt += f"\n\nIMPORTANT: Generate exactly {slide_count} slides total."
         if chat_mode == 'presentation' and presentation_theme:
             system_prompt += f"\n\nUse theme: \"{presentation_theme}\" in the JSON response."
-        messages = self._build_messages(conversation, system_prompt, provider)
+        try:
+            messages = self._build_messages(conversation, system_prompt, provider)
+        except ValueError as exc:
+            self._refund_reservation(permission)
+            return Response({'error': str(exc)}, status=400)
 
         # --- Call LLM via queue ---
         # Presentation mode gets a much larger completion budget than the
@@ -1484,12 +1566,16 @@ class ChatView(APIView):
         # was observed to be silently exhausted by reasoning alone, returning
         # empty content with no error.
         llm_kwargs = {'max_tokens': 8000} if chat_mode == 'presentation' else {}
+        if chat_mode not in ('knowledge', 'presentation'):
+            llm_kwargs['web_user'] = user
         try:
             result = llm_request_queue.submit(call_llm, provider, messages, **llm_kwargs)
         except Exception as e:
             logger.error(f"LLM call failed: {e}")
             self._refund_reservation(permission)
-            return Response({'error': 'The AI model failed to respond. Please try again.'}, status=500)
+            from .services.provider_errors import chat_error
+            message, status_code = chat_error(e, provider)
+            return Response({'error': message}, status=status_code)
 
         # --- Save assistant message ---
         ai_content = result.get('content', '')
@@ -1543,10 +1629,8 @@ class ChatView(APIView):
         # Log token usage
         self._log_usage(user, provider, result)
 
-        # --- Auto-title ---
-        if conversation.title in ('New Chat', '') and conversation.messages.count() <= 2:
-            conversation.title = self._generate_title(message_text)
-            conversation.save(update_fields=['title'])
+        # Persist the first-exchange title before the client refreshes its sidebar.
+        ensure_title(conversation, ai_content)
 
         # --- Auto-summarize in background (avoid blocking the response) ---
         summarize_conversation_task.delay(conversation.id, provider.id)
@@ -1577,6 +1661,7 @@ class ChatView(APIView):
     #  Helpers
     # -----------------------------------------------------------------------
 
+    @timed('provider_lookup')
     def _resolve_provider(self, data):
         """Resolve LLMProvider from request data (by ID or name)."""
         provider_id = data.get('llm_provider_id')
@@ -1598,6 +1683,9 @@ class ChatView(APIView):
                 if conv.llm_provider != provider:
                     conv.llm_provider = provider
                     conv.save(update_fields=['llm_provider'])
+                if conv.chat_mode != chat_mode:
+                    conv.chat_mode = chat_mode
+                    conv.save(update_fields=['chat_mode'])
                 return conv
             except Conversation.DoesNotExist:
                 pass
@@ -1616,17 +1704,36 @@ class ChatView(APIView):
     # window or cost on a huge file, not real retrieval.
     _MAX_DOCUMENT_CONTEXT_CHARS = 40000
 
+    @timed('documents')
     def _get_document_context(self, document_ids, user):
         """Gather extracted text from attached documents."""
         if not document_ids:
             return None
 
-        docs = Document.objects.filter(
+        from django.db.models.functions import Substr, Right, Length
+        owned = Document.objects.filter(
             id__in=document_ids,
             user=user,
             extraction_status='completed',
-        )
-        texts = [d.extracted_text for d in docs if d.extracted_text]
+        ).order_by('pk')
+        docs = list(owned.values('pk', 'original_filename')[:10])
+        keys = {d['pk']: f'document-text:{user.pk}:{d["pk"]}' for d in docs}
+        cached = cache.get_many(keys.values())
+        missing = [pk for pk, key in keys.items() if key not in cached]
+        additions = {}
+        for doc in owned.filter(pk__in=missing).annotate(
+            head=Substr('extracted_text', 1, self._MAX_DOCUMENT_CONTEXT_CHARS),
+            tail=Right('extracted_text', 16000), text_length=Length('extracted_text')
+        ).values('pk', 'head', 'tail', 'text_length'):
+            content = doc['head']
+            if doc['text_length'] > self._MAX_DOCUMENT_CONTEXT_CHARS:
+                content = content[:24000] + '\n[Middle omitted: document exceeds context limit.]\n' + doc['tail']
+            additions[keys[doc['pk']]] = content
+        if additions:
+            cache.set_many(additions, timeout=300)
+            cached.update(additions)
+        texts = [f"Source: {d['original_filename']}\n{cached[keys[d['pk']]]}"
+                 for d in docs if cached.get(keys[d['pk']])]
         if not texts:
             return None
         combined = '\n\n---\n\n'.join(texts)
@@ -1657,119 +1764,8 @@ class ChatView(APIView):
             permission.record_usage(-1)
 
     def _build_messages(self, conversation, system_prompt, current_provider=None):
-        """Build the messages list for the LLM, including summary and recent messages.
-
-        When the user switches models mid-conversation, a boundary note is
-        injected so the new model does not adopt the identity of the previous
-        model based on stale assistant messages in the history.
-        """
-        # --- Inject model identity into the system prompt ---
-        identity = system_prompt
-        if current_provider:
-            model_label = current_provider.display_name or current_provider.model_name
-            identity += (
-                f"\n\nYou are {model_label}. "
-                "Never claim to be a different AI model. "
-                "If the user asks who or what model you are, "
-                f"identify yourself as {model_label}."
-            )
-
-        # Everything below is folded into ONE system message rather than several
-        # separate system-role entries — some models (e.g. gpt-oss-120b) were
-        # observed to silently ignore content in a second/third system message,
-        # so memory and summary context never reached the model even though it
-        # was correctly present in the payload.
-        system_parts = [identity]
-
-        # Long-term memory — durable facts extracted from the user's past
-        # conversations (any of them, not just this one). See _maybe_update_memory.
-        user_memory = getattr(conversation.user, 'long_term_memory', '') or ''
-        if user_memory.strip():
-            system_parts.append(
-                f"What you remember about this user from past conversations:\n{user_memory}\n\n"
-                "Use this naturally when relevant; don't recite it verbatim unless asked."
-            )
-
-        # Include summary if available. Messages are never deleted after summarization
-        # (the full history stays in Postgres for the user to scroll back through) —
-        # summarized_at is the cutoff: only messages created after it belong in the
-        # LLM's context window below, since everything before it is already folded
-        # into the summary text.
-        active_summary = None
-        try:
-            summary = conversation.summary
-            if summary and summary.is_active:
-                active_summary = summary
-                system_parts.append(f"Previous conversation summary: {summary.summary}")
-        except ConversationSummary.DoesNotExist:
-            pass
-
-        msgs = [{'role': 'system', 'content': '\n\n'.join(system_parts)}]
-
-        # --- Smart context window management ---
-        # Fixed 6000 token budget for history — covers ~15-20 normal messages
-        # comfortably without excessive cost. Output headroom (AI reply) is
-        # handled separately by max_tokens on the provider.
-        # Token estimation: words * 1.3 approximates GPT-4 tokenizer ratio.
-        max_context_tokens = 6000
-
-        # Fetch the last 50 messages from DB (newest first), then apply token budget below.
-        # 50 is a safe upper bound — budget trimming will cut it further if needed.
-        history_qs = conversation.messages.select_related('llm_provider')
-        if active_summary:
-            history_qs = history_qs.filter(created_at__gt=active_summary.summarized_at)
-        raw_recent = list(history_qs.order_by('-created_at')[:50])
-
-        # Walk from newest to oldest, accumulating estimated tokens until budget is exhausted.
-        # This ensures the most recent messages are always included and older ones are dropped
-        # when the conversation grows too long — rather than cutting off at a fixed count.
-        selected = []
-        token_budget_used = 0
-        for msg in raw_recent:
-            estimated = int(len(msg.content.split()) * 1.3)
-            if token_budget_used + estimated > max_context_tokens and selected:
-                # Budget exceeded and we already have some messages — stop here.
-                # Always include at least 1 message so empty context never happens.
-                break
-            selected.append(msg)
-            token_budget_used += estimated
-
-        recent_list = list(reversed(selected))
-
-        logger.debug(
-            "Context window: %d messages selected, ~%d estimated tokens (budget: %d)",
-            len(recent_list), token_budget_used, max_context_tokens
-        )
-
-        # Detect model-switch boundary and insert a note
-        if current_provider and recent_list:
-            boundary_inserted = False
-            for i, msg in enumerate(recent_list):
-                if not boundary_inserted and msg.llm_provider_id and msg.llm_provider_id != current_provider.id:
-                    # Still from old provider — will insert boundary before first new-provider msg
-                    pass
-                elif not boundary_inserted and msg.llm_provider_id == current_provider.id:
-                    # Check if any earlier message was from a different provider
-                    has_old = any(
-                        m.llm_provider_id and m.llm_provider_id != current_provider.id
-                        for m in recent_list[:i]
-                    )
-                    if has_old:
-                        msgs.append({
-                            'role': 'system',
-                            'content': (
-                                f"[The user switched to {current_provider.display_name or current_provider.model_name}. "
-                                "The messages above were from a different AI model. "
-                                "Respond as yourself from now on.]"
-                            ),
-                        })
-                    boundary_inserted = True
-                msgs.append({'role': msg.role, 'content': msg.content})
-        else:
-            for msg in recent_list:
-                msgs.append({'role': msg.role, 'content': msg.content})
-
-        return msgs
+        from .conversation_context import build_context
+        return build_context(conversation, system_prompt, current_provider)
 
     def _estimate_cost(self, provider, prompt_tokens, completion_tokens, cached_tokens=0):
         # input_cost_per_1m/output_cost_per_1m are stored as float (admin-configured
@@ -1794,53 +1790,7 @@ class ChatView(APIView):
         return cost.quantize(Decimal('0.000001'))
 
     # ------------------------------------------------------------------
-    @staticmethod
-    def _generate_title(message_text: str) -> str:
-        """
-        Derive a clean, readable chat title from the first user message.
-        - Strips leading filler phrases ("Can you", "Please", etc.)
-        - Title-cases the result
-        - Caps at 60 chars on a word boundary
-        """
-        import re
-
-        text = message_text.strip()
-
-        # Remove markdown code fences / leading symbols
-        text = re.sub(r'^```[\w]*\n?', '', text).strip()
-
-        # Strip common leading filler phrases (case-insensitive)
-        fillers = (
-            r"^(can you |could you |please |i want (you to )?|i need (you to )?|"
-            r"help me (to )?|i('d| would) like (you to )?|"
-            r"tell me (about |how to )?|explain (to me )?(how |what |why |the )?"
-            r"|show me (how to )?|write (me )?(a |an )?|generate (a |an |me )?"
-            r"|create (a |an |me )?|make (a |an |me )?|give me (a |an )?"
-            r"|what is (a |an |the )?|what are (the )?|how (do i |to |does )?"
-            r"|why (is |does |do )?)"
-        )
-        cleaned = re.sub(fillers, '', text, flags=re.IGNORECASE).strip()
-
-        # Fall back to original if stripping removed everything
-        if len(cleaned) < 4:
-            cleaned = text
-
-        # Use only the first sentence/line
-        first_line = re.split(r'[\n\r]', cleaned)[0].strip()
-        first_sentence = re.split(r'(?<=[.!?])\s', first_line)[0].strip()
-        candidate = first_sentence if len(first_sentence) >= 6 else first_line
-
-        # Trim to 60 chars on a word boundary
-        if len(candidate) > 60:
-            trimmed = candidate[:60].rsplit(' ', 1)[0]
-            candidate = trimmed.rstrip('.,;:') + '…'
-
-        # Title-case first letter, keep rest as-is
-        if candidate:
-            candidate = candidate[0].upper() + candidate[1:]
-
-        return candidate or message_text[:60]
-
+    @timed('usage_write')
     def _log_usage(self, user, provider, result):
         """Log LLM usage synchronously to ensure data integrity."""
         usage = result.get('usage', {})
@@ -1874,96 +1824,16 @@ class ChatView(APIView):
             logger.error(f"Failed to log usage: {e}")
 
     def _maybe_summarize(self, conversation, provider):
-        """Auto-summarize once the *unsummarized* portion of the conversation exceeds
-        the token threshold.
-
-        Messages are never deleted — the full history stays in Postgres so a user
-        reopening an old conversation always sees everything they wrote. `summarized_at`
-        (auto_now) marks the cutoff: `_build_messages` only pulls messages created after
-        it into the LLM's context window, since everything before it is already folded
-        into `summary`. Re-summarizing chains the previous summary text together with
-        the new messages, so nothing is dropped across multiple summarization rounds.
-        """
-        threshold = 18000  # Summarize once the unsummarized portion exceeds ~18000 tokens
-
-        # This runs from a background thread and can be kicked off once per message —
-        # two messages sent in quick succession would otherwise both see the same
-        # over-threshold state and both fire an LLM summarization call, with the loser
-        # hitting an IntegrityError on ConversationSummary's OneToOneField. A short
-        # Redis-backed lock (cache is Redis-backed whenever REDIS_URL is set, i.e. in
-        # every real deployment of this stack) makes the check-then-act atomic instead.
-        lock_key = f'summarize-lock-{conversation.id}'
-        if not cache.add(lock_key, 1, timeout=120):
+        if conversation.chat_mode == 'knowledge':
             return False
-
-        try:
-            existing_summary = None
-            try:
-                if conversation.summary.is_active:
-                    existing_summary = conversation.summary
-            except ConversationSummary.DoesNotExist:
-                pass
-
-            new_messages_qs = conversation.messages.all()
-            if existing_summary:
-                new_messages_qs = new_messages_qs.filter(created_at__gt=existing_summary.summarized_at)
-            new_messages = list(new_messages_qs.order_by('created_at'))
-
-            total_tokens = sum(m.token_count for m in new_messages)
-            if total_tokens <= threshold:
-                return False
-
-            try:
-                transcript = '\n'.join(f"{m.role}: {m.content}" for m in new_messages)
-
-                # Bias toward head + tail rather than a naive prefix cut, so a long
-                # unsummarized stretch doesn't get truncated before reaching its most
-                # recent (and usually most relevant) messages.
-                budget = 8000
-                if len(transcript) > budget:
-                    half = budget // 2
-                    transcript = f"{transcript[:half]}\n...\n{transcript[-half:]}"
-
-                summary_input = transcript
-                if existing_summary:
-                    summary_input = (
-                        f"Earlier summary of the conversation so far:\n{existing_summary.summary}\n\n"
-                        f"New messages since that summary:\n{transcript}"
-                    )
-
-                summary_prompt = [
-                    {'role': 'system', 'content': (
-                        'Summarize the following conversation concisely, preserving the key facts, '
-                        'decisions, and context a continuation of this conversation would still need.'
-                    )},
-                    {'role': 'user', 'content': summary_input},
-                ]
-                result = call_llm(provider, summary_prompt, max_tokens=500)
-                summary_text = result.get('content', '')
-
-                if summary_text:
-                    ConversationSummary.objects.update_or_create(
-                        conversation=conversation,
-                        defaults={
-                            'summary': summary_text,
-                            'original_token_count': total_tokens,
-                            'is_active': True,
-                        },
-                    )
-                    return True
-
-            except Exception as e:
-                logger.error(f"Auto-summarize failed: {e}")
-
-            return False
-        finally:
-            cache.delete(lock_key)
+        from .conversation_context import summarize_context
+        return summarize_context(conversation, provider, call_llm)
 
     def _maybe_update_memory(self, conversation, provider):
         """Extract durable facts about the user from this conversation into
         their long_term_memory, so future conversations — even different ones —
-        can recall context across chat sessions (see `_build_messages`, which
-        injects this into every system prompt).
+        can recall context across chat sessions when the user explicitly asks
+        for remembered information (see `_build_messages`).
 
         Runs every N messages rather than on a token threshold like
         `_maybe_summarize`: memory-worthy facts (name, role, ongoing projects,
@@ -1972,6 +1842,8 @@ class ChatView(APIView):
         a self-introduction is very often the entire conversation (2 messages
         total), so a bigger N would miss the single most common case.
         """
+        if conversation.chat_mode == 'knowledge':
+            return False
         every_n_messages = 2
         msg_count = conversation.messages.count()
         if msg_count == 0 or msg_count % every_n_messages != 0:
@@ -2090,6 +1962,9 @@ class ChatStreamView(ChatView):
         )
 
         document_context = self._get_document_context(document_ids, user)
+        if chat_mode == 'knowledge':
+            from .services.rag import knowledge_context
+            document_context, knowledge_sources = knowledge_context(user, message_text)
         effective_mode = chat_mode
         if chat_mode == 'general':
             detected = detect_intent(message_text)
@@ -2131,7 +2006,11 @@ class ChatStreamView(ChatView):
                 )
 
         system_prompt = get_system_prompt(provider, effective_mode, document_context, export_format)
-        messages = self._build_messages(conversation, system_prompt, provider)
+        try:
+            messages = self._build_messages(conversation, system_prompt, provider)
+        except ValueError as exc:
+            self._refund_reservation(permission)
+            return Response({'error': str(exc)}, status=400)
 
         # Capture locals for the generator closure
         _user = user
@@ -2157,7 +2036,7 @@ class ChatStreamView(ChatView):
 
             stream_start = time.monotonic()
             try:
-                for item in stream_llm(_provider, messages):
+                for item in stream_llm(_provider, messages, web_user=_user if chat_mode != 'knowledge' else None):
                     if time.monotonic() - stream_start > llm_request_queue.stream_timeout:
                         raise TimeoutError(
                             f"LLM stream exceeded {llm_request_queue.stream_timeout}s timeout"
@@ -2165,6 +2044,8 @@ class ChatStreamView(ChatView):
                     if isinstance(item, str) and item:
                         content_parts.append(item)
                         yield f"event: token\ndata: {json.dumps({'text': item})}\n\n"
+                    elif isinstance(item, dict) and item.get('event'):
+                        yield f"event: {item['event']}\ndata: {json.dumps(item)}\n\n"
                     elif isinstance(item, dict):
                         final_result = item
             except Exception as exc:
@@ -2174,7 +2055,9 @@ class ChatStreamView(ChatView):
                 # streaming started — refund it here instead of leaving the
                 # user permanently over-charged for a request that failed.
                 self._refund_reservation(_permission)
-                yield f"event: error\ndata: {json.dumps({'error': 'The AI model failed to respond. Please try again.'})}\n\n"
+                from .services.provider_errors import chat_error
+                message, status_code = chat_error(exc, _provider)
+                yield f"event: error\ndata: {json.dumps({'error': message, 'status': status_code})}\n\n"
                 return
             finally:
                 llm_request_queue.release_stream_slot()
@@ -2185,12 +2068,12 @@ class ChatStreamView(ChatView):
             if final_result:
                 token_count = final_result.get('usage', {}).get('total_tokens', 0)
 
-            # Send the done event immediately — the frontend only needs conversation_id
-            # and token_count, both of which are already available at this point.
-            # We do NOT wait for the AI message DB write before sending done,
-            # because that would add an unnecessary DB round-trip delay to every
-            # streaming response from the user's perspective.
-            yield f"event: done\ndata: {json.dumps({'conversation_id': _conversation.id, 'token_count': token_count, 'export_format': _export_format})}\n\n"
+            title = ensure_title(_conversation, ai_content)
+            # Persist the completed answer before reporting completion. The next
+            # turn must not race Celery and lose its immediate assistant context.
+            ai_msg = Message.objects.create(conversation=_conversation, role='assistant',
+                content=ai_content, llm_provider=_provider, token_count=self._estimate_tokens(ai_content),
+                export_status='processing' if _export_format else '', export_file_type=_export_format or '')
 
             # Post-processing (save AI message, usage logging, auto-title,
             # auto-summarize) runs as a Celery task on the "chat_post" queue
@@ -2202,7 +2085,9 @@ class ChatStreamView(ChatView):
             chat_stream_post_process_task.delay(
                 _conversation.id, _provider.id, _user.id, ai_content, final_result,
                 _permission.id if _permission else None, _message_text, _export_format,
+                message_id=ai_msg.pk,
             )
+            yield f"event: done\ndata: {json.dumps({'conversation_id': _conversation.id, 'message_id': ai_msg.pk, 'title': title, 'token_count': token_count, 'export_format': _export_format})}\n\n"
 
         resp = StreamingHttpResponse(generate(), content_type='text/event-stream')
         resp['X-Accel-Buffering'] = 'no'
@@ -2749,9 +2634,11 @@ def converter_check_access(request):
 def converter_formats(request):
     """Return supported input/output formats and quality presets."""
     return Response({
-        'input_formats': INPUT_FORMATS,
+        'input_formats': {key: value for key, value in INPUT_FORMATS.items()
+                          if key in settings.CONVERTER_ALLOWED_UPLOAD_TYPES and get_available_outputs(key)},
         'output_formats': OUTPUT_FORMATS,
         'quality_presets': QUALITY_PRESETS,
+        'max_upload_size_mb': settings.MAX_UPLOAD_SIZE_MB,
     })
 
 
@@ -2771,6 +2658,8 @@ def converter_get_outputs(request):
     
     category = get_file_category(input_format)
     available_outputs = get_available_outputs(input_format)
+    if input_format not in settings.CONVERTER_ALLOWED_UPLOAD_TYPES:
+        available_outputs = {}
     
     return Response({
         'input_format': input_format,
@@ -2803,6 +2692,10 @@ def converter_convert(request):
         return Response({'error': 'No file provided'}, status=400)
     if not target_format:
         return Response({'error': 'No target_format provided'}, status=400)
+    from .document_processor import validate_upload
+    _, upload_error = validate_upload(file, allowed_types=settings.CONVERTER_ALLOWED_UPLOAD_TYPES)
+    if upload_error:
+        return Response({'error': upload_error}, status=400)
     if quality not in QUALITY_PRESETS:
         quality = 'high'
 
@@ -2877,6 +2770,8 @@ def converter_download(request, job_id):
     import mimetypes
     from django.http import FileResponse, Http404
 
+    close_old_connections()
+
     user = request.user
     try:
         job = ConversionJob.objects.get(id=job_id, user=user)
@@ -2906,17 +2801,16 @@ def converter_delete(request, job_id):
     """Delete a conversion job and its files."""
     user = request.user
     
-    try:
-        job = ConversionJob.objects.get(id=job_id, user=user)
-    except ConversionJob.DoesNotExist:
-        return Response({'error': 'Conversion not found'}, status=404)
-    
-    # Delete files
-    if job.input_file:
-        job.input_file.delete(save=False)
-    if job.output_file:
-        job.output_file.delete(save=False)
-    
-    job.delete()
+    with transaction.atomic():
+        job = ConversionJob.objects.select_for_update().filter(id=job_id, user=user).first()
+        if not job:
+            return Response({'error': 'Conversion not found'}, status=404)
+        if job.status in ('pending', 'processing'):
+            return Response({'error': 'Wait for the job to finish before deleting it.'}, status=409)
+        files = [job.input_file, job.output_file] + [item.file for item in job.additional_inputs.all()]
+        job.delete()
+        for file in files:
+            if file:
+                transaction.on_commit(lambda file=file: file.delete(save=False))
     return Response({'success': True})
 

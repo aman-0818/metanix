@@ -85,7 +85,7 @@ export function LogsViewer() {
       params.append('limit', limit.toString());
       params.append('offset', offset.toString());
 
-      const response = await apiService.request(
+      const response = await apiService.request<{ results: SignInLog[]; count: number }>(
         `/admin/logs/sign-in/?${params.toString()}`,
         { method: 'GET' }
       );
@@ -109,7 +109,7 @@ export function LogsViewer() {
       params.append('limit', limit.toString());
       params.append('offset', offset.toString());
 
-      const response = await apiService.request(
+      const response = await apiService.request<{ results: AuditLog[]; count: number }>(
         `/admin/logs/audit/?${params.toString()}`,
         { method: 'GET' }
       );
@@ -128,7 +128,7 @@ export function LogsViewer() {
     setError('');
     // Load statistics
     try {
-      const response = await apiService.request(
+      const response = await apiService.request<LogStats>(
         '/admin/logs/stats/',
         { method: 'GET' }
       );

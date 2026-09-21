@@ -4,22 +4,8 @@ import { cn } from '@/lib/utils';
 import { DocumentUpload, DocumentChip } from './DocumentUpload';
 import { PresentationControls } from './PresentationControls';
 import { useChatStore } from '@/hooks/useChatStore';
-import BorderGlow from '@/components/effects/BorderGlow';
+import { ModelPicker } from './ModelPicker';
 import type { ChatMode } from '@/types/chat';
-
-// Same hover/proximity glow used on the login page's buttons + inputs —
-// teal to match the app palette, sized to this composer's own radius/fill.
-const CHAT_GLOW_PROPS = {
-  edgeSensitivity: 30,
-  glowColor: '173 80 50',
-  backgroundColor: '#FFFFFF',
-  borderRadius: 20,
-  glowRadius: 20,
-  glowIntensity: 0.9,
-  coneSpread: 25,
-  animated: false,
-  colors: ['#12A594', '#3DE0C4', '#0E8677'],
-};
 
 interface ChatInputProps {
   onSend: (message: string) => void;
@@ -36,8 +22,9 @@ interface ChatInputProps {
 // auto-switches into it (see the attachedDocuments effect below), so a
 // separate "Document Q&A" chip was redundant with plain General.
 const SINGLE_MODES: { mode: ChatMode; label: string; icon: typeof MessageSquare }[] = [
-  { mode: 'general', label: 'General', icon: MessageSquare },
+  { mode: 'general', label: 'Chat', icon: MessageSquare },
   { mode: 'code', label: 'Code', icon: Code2 },
+  { mode: 'knowledge', label: 'Company knowledge', icon: MessageSquare },
   { mode: 'presentation', label: 'Presentation', icon: PresentationIcon },
 ];
 
@@ -47,7 +34,7 @@ export function ChatInput({
   disabled = false,
   showStop = false,
   isWaiting = false,
-  placeholder = 'Ask Aionos AI anything...',
+  placeholder = 'Ask Metanix anything, or bring a file…',
   variant = 'docked',
 }: ChatInputProps) {
   const [message, setMessage] = useState('');
@@ -70,11 +57,11 @@ export function ChatInput({
   const hasPendingDocuments = attachedDocuments.some(
     (d) => d.extraction_status === 'pending' || d.extraction_status === 'processing'
   );
-  const canSend = message.trim().length > 0 && !disabled && !hasPendingDocuments;
+  const canSend = message.trim().length > 0 && !disabled && !showStop && !hasPendingDocuments;
 
   const handleSubmit = () => {
     const trimmed = message.trim();
-    if (trimmed && !disabled && !hasPendingDocuments) {
+    if (trimmed && !disabled && !showStop && !hasPendingDocuments) {
       onSend(trimmed);
       setMessage('');
       if (textareaRef.current) textareaRef.current.style.height = 'auto';
@@ -82,7 +69,7 @@ export function ChatInput({
   };
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === 'Enter' && !e.shiftKey) {
+    if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
       e.preventDefault();
       handleSubmit();
     }
@@ -105,16 +92,17 @@ export function ChatInput({
   const isFloating = variant === 'floating';
 
   return (
-    <div className={cn(!isFloating && 'px-7 safe-bottom')}>
-      <div className={cn('mx-auto', isFloating ? 'w-full max-w-[760px]' : 'max-w-[1040px]')}>
-        <BorderGlow {...CHAT_GLOW_PROPS}>
+    <div className={cn(!isFloating && 'px-4 sm:px-7 safe-bottom')}>
+      <div className={cn('mx-auto', isFloating ? 'w-full' : 'max-w-[850px]')}>
+
         <div
           className={cn(
-            'rounded-[20px] bg-card border shadow-[0_4px_24px_rgba(43,38,32,0.06)] transition-colors duration-200 px-[18px] py-[14px]',
+            'workspace-composer',
             disabled ? 'opacity-60 border-border/40' : 'border-border focus-within:border-primary/40'
           )}
         >
           <textarea
+            aria-label="Message Metanix"
             ref={textareaRef}
             value={message}
             onChange={(e) => setMessage(e.target.value)}
@@ -123,7 +111,7 @@ export function ChatInput({
             disabled={disabled}
             rows={1}
             className={cn(
-              'w-full resize-none bg-transparent placeholder:text-muted-foreground/50 focus:outline-none disabled:cursor-not-allowed min-h-[26px] max-h-[160px]',
+              'w-full resize-none bg-transparent placeholder:text-muted-foreground focus:outline-none disabled:cursor-not-allowed min-h-[54px] max-h-[160px]',
               isFloating ? 'text-base' : 'text-[15.5px]'
             )}
           />
@@ -136,7 +124,7 @@ export function ChatInput({
             </div>
           )}
 
-          {chatMode === 'presentation' && <div className="mt-2"><PresentationControls /></div>}
+          {chatMode === 'presentation' && <div className="my-3"><p className="text-xs text-primary mb-2 font-medium">Presentation studio · Describe your topic to create a downloadable deck</p><PresentationControls /></div>}
 
           <div className="flex items-end justify-between mt-2.5 gap-2">
             {/* Mode chips — always visible, directly selectable (no dropdown).
@@ -154,14 +142,14 @@ export function ChatInput({
                     aria-pressed={isActive}
                     title={label}
                     className={cn(
-                      'flex items-center gap-1.5 px-3 py-1.5 rounded-full text-[12.5px] font-medium border transition-all shrink-0',
+                      'flex items-center gap-1.5 px-2 sm:px-3 py-2 rounded-lg text-[12px] font-medium border transition-all shrink-0',
                       isActive
-                        ? 'bg-primary text-primary-foreground border-primary shadow-sm'
-                        : 'bg-transparent text-muted-foreground border-border/60 hover:border-border hover:text-foreground hover:bg-muted/40'
+                        ? 'bg-accent text-accent-foreground border-transparent'
+                        : 'bg-transparent text-muted-foreground border-transparent hover:border-border hover:text-foreground hover:bg-muted/40'
                     )}
                   >
                     <Icon className="w-3.5 h-3.5 shrink-0" />
-                    {label}
+                    <span className={mode === 'code' ? 'sr-only sm:not-sr-only' : undefined}>{label}</span>
                   </button>
                 );
               })}
@@ -171,7 +159,7 @@ export function ChatInput({
               <button
                 onClick={onStop}
                 disabled={!onStop}
-                className="shrink-0 w-8 h-8 rounded-full flex items-center justify-center transition-all bg-destructive/10 text-destructive hover:bg-destructive hover:text-white"
+                className="shrink-0 w-10 h-10 rounded-xl flex items-center justify-center transition-all bg-destructive/10 text-destructive hover:bg-destructive hover:text-white"
                 title="Stop generation"
                 aria-label="Stop generation"
               >
@@ -186,7 +174,7 @@ export function ChatInput({
                 onClick={handleSubmit}
                 disabled={!canSend}
                 className={cn(
-                  'shrink-0 w-8 h-8 rounded-full flex items-center justify-center transition-colors',
+                  'shrink-0 w-10 h-10 rounded-xl flex items-center justify-center transition-colors',
                   canSend ? 'bg-primary text-primary-foreground cursor-pointer' : 'bg-muted text-muted-foreground cursor-default'
                 )}
                 title={hasPendingDocuments ? 'Waiting for document to finish processing…' : 'Send message (Enter)'}
@@ -199,8 +187,9 @@ export function ChatInput({
               </button>
             )}
           </div>
+          <div className="flex items-center justify-between border-t border-border/60 mt-3 pt-2 gap-2"><ModelPicker /><span className="hidden sm:block text-[10px] text-muted-foreground">Enter to send · Shift + Enter for a new line</span></div>
         </div>
-        </BorderGlow>
+
       </div>
     </div>
   );

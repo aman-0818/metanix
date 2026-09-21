@@ -40,6 +40,7 @@ def _build_user_payload(user: User):
         'role': user.role,
         'is_admin': user.is_admin(),
         'is_superuser': user.is_superuser,
+        'is_staff': user.is_staff,
         'has_document_converter': user.has_document_converter,
         'cost_quota_usd': str(user.cost_quota_usd) if user.cost_quota_usd is not None else None,
         'cost_used_usd': str(user.cost_used_usd) if user.cost_used_usd else '0',

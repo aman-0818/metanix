@@ -38,6 +38,13 @@ export const MAX_UPLOAD_SIZE_MB = 25;
 // ApiService
 // ---------------------------------------------------------------------------
 class ApiService {
+  async multipart<T>(endpoint: string, body: FormData, method = 'POST'): Promise<T> {
+    const response = await this.authFetch(`${API_BASE_URL}${endpoint}`, { method, body });
+    if (response.status === 413) throw new Error('Upload exceeds the server request limit. Use fewer or smaller files.');
+    const data = await response.json().catch(() => { throw new Error(`Upload failed (${response.status}). Please try again.`); });
+    if (!response.ok) throw new Error(typeof data.detail === 'string' ? data.detail : JSON.stringify(data));
+    return data as T;
+  }
   private token: string | null = null;
   private refreshToken: string | null = null;
   private refreshPromise: Promise<string> | null = null;
@@ -287,8 +294,9 @@ class ApiService {
     } = {},
     callbacks: {
       onToken: (token: string) => void;
-      onDone: (data: { conversation_id: number; token_count: number; export_format?: ExportFileType | null }) => void;
+      onDone: (data: { conversation_id: number; title?: string; token_count: number; export_format?: ExportFileType | null }) => void;
       onError: (error: string) => void;
+      onSearch?: (searching: boolean, error?: string) => void;
     },
     signal?: AbortSignal
   ): Promise<void> {
@@ -346,6 +354,8 @@ class ApiService {
           if (eventType === 'token') callbacks.onToken(data.text ?? '');
           else if (eventType === 'done') callbacks.onDone(data);
           else if (eventType === 'error') callbacks.onError(data.error ?? 'Unknown error');
+          else if (eventType === 'search') callbacks.onSearch?.(true);
+          else if (eventType === 'sources') callbacks.onSearch?.(false, data.error);
         } catch {
           // ignore malformed events
         }
@@ -601,6 +611,18 @@ class ApiService {
   // -------------------------------------------------------------------------
   // Admin — User Management
   // -------------------------------------------------------------------------
+  async createLocalUser(payload: {
+    username: string;
+    email: string;
+    password: string;
+    role?: 'admin' | 'user';
+  }) {
+    return this.request<{ message: string; user: any }>('/admin/users/local/', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    });
+  }
+
   async getUsers() {
     return this.request<
       Array<{
@@ -802,6 +824,31 @@ class ApiService {
 
   async getConverterHistory() {
     return this.request<{ conversions: ConversionJob[] }>('/admin/converter/history/');
+  }
+
+  async downloadConversion(jobId: number): Promise<Blob> {
+    // Use the same reachable API origin as uploads/status, not an absolute
+    // URL generated from the backend's internal proxy host or protocol.
+    let response: Response;
+    try {
+      response = await this.authFetch(`${API_BASE_URL}/admin/converter/${jobId}/download/`);
+    } catch (error) {
+      if (error instanceof TypeError) throw new Error('Cannot reach the download service. Refresh the page and try again.');
+      throw error;
+    }
+    if (!response.ok) {
+      if (response.status === 401) throw new Error('Your session has expired. Sign in again to download.');
+      if (response.status === 403) throw new Error('You do not have permission to download this file.');
+      if (response.status === 404) throw new Error('The converted file is unavailable. Refresh conversion history or convert the file again.');
+      throw new Error(`The download service returned an error (${response.status}). Please try again.`);
+    }
+    if (response.headers.get('content-type')?.includes('text/html') &&
+        !response.headers.get('content-disposition')?.includes('attachment')) {
+      throw new Error('The download address returned a webpage instead of a file. Check the API connection.');
+    }
+    const blob = await response.blob();
+    if (!blob.size) throw new Error('The converted file is empty. Please convert it again.');
+    return blob;
   }
 
   async deleteConversion(jobId: number) {

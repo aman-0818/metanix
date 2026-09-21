@@ -9,19 +9,11 @@ interface CodeBlockProps {
   isStreaming?: boolean;
 }
 
-// Syntax color palette — light background (the AI response card is white;
-// code blocks now match instead of using the dark tone that's also the
-// user message bubble's color, which read as "user-colored" inside an AI
-// response). Every value here is checked against the #FAFAF8-ish content
-// background for WCAG AA (>=4.5:1).
+// Syntax colors follow the workspace theme for readable code in both modes.
 const C = {
-  keyword:  '#9333EA', // purple-600
-  string:   '#15803D', // green-700
-  comment:  '#6B5F4E', // matches --muted-foreground, already AA-verified in index.css
-  literal:  '#1D4ED8', // blue-700
-  number:   '#B45309', // amber-700
-  type:     '#7C3AED', // violet-600
-  tag:      '#BE123C', // rose-700
+  keyword: 'hsl(var(--syntax-keyword))', string: 'hsl(var(--syntax-string))',
+  comment: 'hsl(var(--muted-foreground))', literal: 'hsl(var(--syntax-literal))',
+  number: 'hsl(var(--warning))', type: 'hsl(var(--syntax-keyword))', tag: 'hsl(var(--syntax-tag))',
 };
 
 const highlightCode = (code: string, language: string): JSX.Element[] => {
@@ -195,10 +187,10 @@ const LANG_DISPLAY: Record<string, string> = {
 export const CodeBlock = memo(function CodeBlock({ code, language, isStreaming }: CodeBlockProps) {
   const [copied, setCopied] = useState(false);
 
-  const handleCopy = () => {
-    navigator.clipboard.writeText(code);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
+  const [copyError, setCopyError] = useState(false);
+  const handleCopy = async () => {
+    try { await navigator.clipboard.writeText(code); setCopied(true); setCopyError(false); setTimeout(() => setCopied(false), 2000); }
+    catch { setCopyError(true); }
   };
 
   const displayLang = LANG_DISPLAY[language.toLowerCase()] || language || 'Code';
@@ -233,7 +225,7 @@ export const CodeBlock = memo(function CodeBlock({ code, language, isStreaming }
               copied ? 'bg-success/10 text-success' : 'hover:bg-black/5 text-muted-foreground hover:text-foreground'
             )}
           >
-            {copied ? (
+            {copyError ? <span role="status">Copy failed</span> : copied ? (
               <><Check className="w-3 h-3" />Copied</>
             ) : (
               <><Copy className="w-3 h-3" />Copy</>
